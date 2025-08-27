@@ -27,6 +27,7 @@ app.use(cors({
     'https://localhost:5000',
     'http://localhost:5000/api','http://localhost:5173',         
     'https://localhost:5173',
+    'https://bill-bot-legal.vercel.app',
     
   ],
   credentials: true,
