@@ -20,21 +20,27 @@ const app = express();
 app.set("trust proxy", 1);
 
 connectDB();
+const allowlist = new Set([
+  'chrome-extension://loicakonhdggeejichcfpgagooapmdek',
+  'https://mail.google.com',
+  'http://localhost:5173',
+  'http://localhost:5000',
+  process.env.FRONTEND_URL, 
+  
+]);
 
 app.use(cors({
-  origin: [
-    'chrome-extension://loicakonhdggeejichcfpgagooapmdek',
-    'https://mail.google.com',
-    'https://localhost:5000',
-    'http://localhost:5000/api','http://localhost:5173',         
-    'https://localhost:5173',
-    'https://bill-bot-legal.vercel.app',
-    
-  ],
+  origin(origin, cb) {
+    // allow no-origin (curl/postman) and any vercel.app preview of your project
+    if (!origin) return cb(null, true);
+    if (allowlist.has(origin)) return cb(null, true);
+    if (/\.vercel\.app$/.test(origin)) return cb(null, true); // preview deploys
+    return cb(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
-
 app.use(express.json());
+app.options('*', cors({ origin: true, credentials: true }));
 
 // Core routes
 app.use('/api/email-entry', emailEntryRoutes);
