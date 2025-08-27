@@ -18,6 +18,14 @@ export const loginUser = async (req, res) => {
       { expiresIn: "1d" }
     );
 
+    res.cookie("token", token, {
+  httpOnly: true,
+  secure: true,        // required over https
+  sameSite: "none",    // because site = vercel.app, api = onrender.com
+  path: "/",
+  maxAge: 7*24*60*60*1000,
+});
+
     res.json({
       success: true,
       token,
