@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-
+import { Router } from 'express';
 import connectDB from './config/db.js';
 
 // ROUTES
@@ -17,7 +17,25 @@ import caseRoutes from './routes/caseRoutes.js';
 import teamAssignmentRoutes from './routes/teamAssignmentRoutes.js';
 
 dotenv.config();
+import { Router } from 'express';
 
+(() => {
+  const METHODS = ['use', 'get', 'post', 'put', 'patch', 'delete', 'options', 'all'];
+  for (const m of METHODS) {
+    const orig = Router.prototype[m];
+    Router.prototype[m] = function (path, ...handlers) {
+      // Only validate the "path" variant (not the mware-only signature)
+      if (typeof path === 'string') {
+        if (!path.startsWith('/') && path !== '*') {
+          console.error(`🚫 Invalid router.${m}() path (must be a PATH, not a URL):`, path);
+          // Skip registering this bad path to prevent path-to-regexp crash
+          return this;
+        }
+      }
+      return orig.call(this, path, ...handlers);
+    };
+    }
+})();
 const app = express();
 app.set('trust proxy', 1);
 
