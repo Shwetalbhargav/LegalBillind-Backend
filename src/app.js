@@ -1,11 +1,13 @@
-
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+
 import connectDB from './config/db.js';
+
+// ROUTES
 import clioSyncRoutes from './routes/clioSync.js';
 import emailEntryRoutes from './routes/emailEntry.js';
-import clioAuthRoutes from './routes/clioAuth.js'; 
+import clioAuthRoutes from './routes/clioAuth.js';
 import authRoutes from './routes/authRoutes.js';
 import billableRoutes from './routes/billableRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';
@@ -17,32 +19,34 @@ import teamAssignmentRoutes from './routes/teamAssignmentRoutes.js';
 dotenv.config();
 
 const app = express();
-app.set("trust proxy", 1);
+app.set('trust proxy', 1);
 
+// --- DB
 connectDB();
+
+// --- CORS (allow vercel previews + explicit allowlist)
 const allowlist = new Set([
   'chrome-extension://loicakonhdggeejichcfpgagooapmdek',
   'https://mail.google.com',
   'http://localhost:5173',
   'http://localhost:5000',
-  process.env.FRONTEND_URL, 
-  
+  process.env.FRONTEND_URL,
 ]);
 
 app.use(cors({
   origin(origin, cb) {
-    // allow no-origin (curl/postman) and any vercel.app preview of your project
     if (!origin) return cb(null, true);
     if (allowlist.has(origin)) return cb(null, true);
-    if (/\.vercel\.app$/.test(origin)) return cb(null, true); // preview deploys
+    if (/\.vercel\.app$/.test(origin)) return cb(null, true);
     return cb(new Error('Not allowed by CORS'));
   },
   credentials: true,
 }));
+
 app.use(express.json());
 app.options('*', cors({ origin: true, credentials: true }));
 
-// Core routes
+// --- ROUTE MOUNTS (ALL **PATHS**, no URLs)
 app.use('/api/email-entry', emailEntryRoutes);
 app.use('/api/billables', billableRoutes);
 app.use('/api/clients', clientRoutes);
@@ -54,6 +58,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/team-assignments', teamAssignmentRoutes);
 app.use('/clio', clioAuthRoutes);
 
+// --- utility endpoint
 app.post('/generate-email', async (req, res) => {
   try {
     const prompt = req?.body?.prompt;
@@ -66,8 +71,8 @@ app.post('/generate-email', async (req, res) => {
     const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         model,
@@ -75,20 +80,16 @@ app.post('/generate-email', async (req, res) => {
         max_tokens: 512,
         messages: [
           { role: 'system', content: 'You are a helpful assistant that writes concise, formal legal emails suitable for billing summaries.' },
-          { role: 'user', content: `Write a formal legal email.\n\nPrompt: ${prompt}` }
-        ]
-      })
+          { role: 'user', content: `Write a formal legal email.\n\nPrompt: ${prompt}` },
+        ],
+      }),
     });
 
-    const raw = await r.text(); // keep raw for logging even on error
-    if (!r.ok) {
-      console.error('[Groq error]', r.status, raw);
-      return res.status(r.status).json({ error: 'Groq error', details: raw });
-    }
+    const raw = await r.text();
+    if (!r.ok) return res.status(r.status).json({ error: 'Groq error', details: raw });
 
     let json = {};
-    try { json = JSON.parse(raw); } catch (e) {
-      console.error('[Groq parse error]', e, raw);
+    try { json = JSON.parse(raw); } catch {
       return res.status(502).json({ error: 'Invalid JSON from Groq' });
     }
 
@@ -97,12 +98,8 @@ app.post('/generate-email', async (req, res) => {
 
     res.json({ email });
   } catch (e) {
-    console.error('[generate-email] server error', e);
     res.status(500).json({ error: e.message || 'Server error' });
   }
 });
-
-
-
 
 export default app;
