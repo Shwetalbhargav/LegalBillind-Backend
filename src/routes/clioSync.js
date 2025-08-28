@@ -29,7 +29,7 @@ router.post('/sync-billables', async (req, res) => {
       await pushTimeEntryToClio({
         userId,
         matterId,
-        quantity: billable.durationHours,
+        quantity: billable.hours,
         description: billable.description
       });
 
