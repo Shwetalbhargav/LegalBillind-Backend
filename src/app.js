@@ -44,20 +44,26 @@ app.use(cors({
 }));
 
 app.use(express.json());
+const safeUse = (p, r) => {
+  if (typeof p !== 'string' || (!p.startsWith('/') && p !== '*')) {
+    console.error('🚫 Invalid route mount (must be a path, not a URL):', p);
+    return; // skip instead of crashing; you'll see the offender in logs
+  }
+  app.use(p, r);
+};
 app.options('*', cors({ origin: true, credentials: true }));
 
 // --- ROUTE MOUNTS (ALL **PATHS**, no URLs)
-app.use('/api/email-entry', emailEntryRoutes);
-app.use('/api/billables', billableRoutes);
-app.use('/api/clients', clientRoutes);
-app.use('/api/invoices', invoiceRoutes);
-app.use('/api/analytics', analyticsRoutes);
-app.use('/api/cases', caseRoutes);
-app.use('/api/clio-sync', clioSyncRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/team-assignments', teamAssignmentRoutes);
-app.use('/clio', clioAuthRoutes);
-
+safeUse('/api/email-entry', emailEntryRoutes);
+safeUse('/api/billables', billableRoutes);
+safeUse('/api/clients', clientRoutes);
+safeUse('/api/invoices', invoiceRoutes);
+safeUse('/api/analytics', analyticsRoutes);
+safeUse('/api/cases', caseRoutes);
+safeUse('/api/clio-sync', clioSyncRoutes);
+safeUse('/api/auth', authRoutes);
+safeUse('/api/team-assignments', teamAssignmentRoutes);
+safeUse('/clio', clioAuthRoutes);
 // --- utility endpoint
 app.post('/generate-email', async (req, res) => {
   try {
