@@ -1,7 +1,9 @@
 // controllers/invoiceController.js
+import mongoose from 'mongoose';
 import Invoice from '../models/Invoice.js';
 import Billable from '../models/Billable.js';
 import EmailEntry from '../models/EmailEntry.js';
+import Case from '../models/Case.js';
 
 /**
  * POST /api/invoices
@@ -24,14 +26,13 @@ export const createInvoice = async (req, res) => {
     let items = [];
 
     if (Array.isArray(billableIds) && billableIds.length) {
-      // Strategy A: from Billables (existing behavior)
+      // Strategy A: from Billables
       const billables = await Billable.find({ _id: { $in: billableIds } });
       if (!billables.length) return res.status(422).json({ error: 'No billables found' });
 
       items = billables.map(b => ({
         billableId: b._id,
         description: b.description,
-        // prefer minutes when present; fall back if your Billable uses hours in some places
         durationMinutes: typeof b.durationMinutes === 'number' ? b.durationMinutes : (b.durationHours || 0) * 60,
         rate: b.rate,
         amount: typeof b.amount === 'number'
@@ -41,21 +42,19 @@ export const createInvoice = async (req, res) => {
     } else if (Array.isArray(emailEntryIds) && emailEntryIds.length) {
       // Strategy B: from EmailEntries
       const entries = await EmailEntry.find({ _id: { $in: emailEntryIds } });
-
       if (entries.length !== emailEntryIds.length) {
         return res.status(404).json({ error: 'One or more EmailEntry ids not found' });
       }
 
       items = entries.map(e => {
-        const durationMinutes = e.typingTimeMinutes || 0; // from EmailEntry schema
-        const rate = typeof e.rate === 'number' ? e.rate : defaultRate; // allow per-entry rate later
+        const durationMinutes = e.typingTimeMinutes || 0;
+        const rate = typeof e.rate === 'number' ? e.rate : defaultRate;
         const amount = (rate && durationMinutes)
           ? Number(((rate * durationMinutes) / 60).toFixed(2))
           : 0;
 
         return {
-          // billableId intentionally omitted (your Invoice schema requires it now)
-          // If you decide to relax that requirement later, you can add it here.
+          // billableId omitted intentionally when invoicing email-only items
           description: e.billableSummary || e.subject || `Email with ${e.recipient}`,
           durationMinutes,
           rate,
@@ -66,14 +65,14 @@ export const createInvoice = async (req, res) => {
       return res.status(400).json({ error: 'Provide billableIds[] or emailEntryIds[]' });
     }
 
-    // Compute totalAmount to satisfy schema requirement
+    // Compute total
     const totalAmount = Number(items.reduce((s, it) => s + (it.amount || 0), 0).toFixed(2));
 
     const invoice = await Invoice.create({
       clientId,
       caseId,
       items,
-      totalAmount,               // required by schema
+      totalAmount,
       currency,
       dueDate,
       notes,
@@ -98,23 +97,158 @@ export const getInvoiceById = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/invoices
+ * Filters:
+ *   - clientId, status
+ *   - pending=true (sent/partial/overdue)
+ *   - from, to (issueDate range)
+ *   - caseType, caseTypeId (filters via Cases)
+ */
 export const getAllInvoices = async (req, res) => {
   try {
-    const invoices = await Invoice.find()
+    const { caseType, caseTypeId, clientId, status, from, to, pending } = req.query;
+
+    const filter = {};
+
+    if (clientId) filter.clientId = clientId;
+
+    // pending = any non-void invoice with positive balance
+    if (pending === 'true') {
+      filter.status = { $in: ['sent', 'partial', 'overdue'] };
+    } else if (status) {
+      filter.status = status;
+    }
+
+    if (from || to) {
+      filter.issueDate = {};
+      if (from) filter.issueDate.$gte = new Date(from);
+      if (to)   filter.issueDate.$lte = new Date(to);
+    }
+
+    // Filter by case type (label or id)
+    if (caseType || caseTypeId) {
+      const q = {};
+      if (caseType) q.case_type = caseType.trim();
+      if (caseTypeId) {
+        if (!mongoose.Types.ObjectId.isValid(caseTypeId)) {
+          return res.status(400).json({ error: 'Invalid caseTypeId' });
+        }
+        q.case_type_id = new mongoose.Types.ObjectId(caseTypeId);
+      }
+      const caseIds = await Case.find(q).distinct('_id');
+      if (!caseIds.length) return res.json([]); // nothing matches
+      filter.caseId = { $in: caseIds };
+    }
+
+    const invoices = await Invoice.find(filter)
       .populate('clientId caseId items.billableId createdBy')
       .sort({ createdAt: -1 });
+
     res.json(invoices);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch invoices' });
   }
 };
 
+/**
+ * POST /api/invoices/:id/payments
+ * Body: { amount, date, method, reference?, receivedBy?, notes? }
+ */
+export const addPayment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount, date, method, reference, receivedBy, notes } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'amount must be > 0' });
+    }
+    if (!date) {
+      return res.status(400).json({ error: 'date is required' });
+    }
+
+    const invoice = await Invoice.findById(id);
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+    if (invoice.status === 'void') return res.status(400).json({ error: 'Cannot pay a void invoice' });
+
+    // prevent overpayment
+    const newPaidTotal = (invoice.amountPaid || 0) + amount;
+    if (newPaidTotal - (invoice.totalAmount || 0) > 0.01) {
+      return res.status(400).json({ error: 'Payment exceeds invoice total' });
+    }
+
+    invoice.payments.push({ amount, date, method, reference, receivedBy, notes });
+    await invoice.save();
+
+    res.json(invoice);
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Failed to add payment' });
+  }
+};
+
+/**
+ * GET /api/invoices/__analytics/pending-by-client
+ * Returns totals per client for unpaid/partially paid/overdue invoices.
+ */
+export const getPendingSummaryByClient = async (_req, res) => {
+  try {
+    const pipeline = [
+      { $match: { status: { $in: ['sent', 'partial', 'overdue'] } } },
+      {
+        $project: {
+          clientId: 1,
+          totalAmount: 1,
+          amountPaid: 1,
+          balance: { $max: [ { $subtract: ['$totalAmount', '$amountPaid'] }, 0 ] }
+        }
+      },
+      {
+        $group: {
+          _id: '$clientId',
+          invoices:   { $sum: 1 },
+          totalBilled:{ $sum: '$totalAmount' },
+          totalPaid:  { $sum: '$amountPaid' },
+          totalDue:   { $sum: '$balance' }
+        }
+      },
+      { $sort: { totalDue: -1 } }
+    ];
+
+    const rows = await Invoice.aggregate(pipeline);
+
+    // populate client names
+    await Invoice.populate(rows, { path: '_id', model: 'Client', select: 'name' });
+    const mapped = rows.map(r => ({
+      clientId: r._id?._id || r._id,
+      clientName: r._id?.name,
+      invoices: r.invoices,
+      totalBilled: r.totalBilled,
+      totalPaid: r.totalPaid,
+      totalDue: r.totalDue
+    }));
+
+    res.json(mapped);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to build pending summary' });
+  }
+};
+
+/**
+ * (kept for compatibility) GET /api/invoices/user/:userId
+ * Returns invoices containing items linked to the user’s billables
+ */
 export const getInvoicesByUser = async (req, res) => {
   try {
     const { userId } = req.params;
-    const invoices = await Invoice.find({ createdBy: userId })
+
+    // find billables by user, then invoices referencing them
+    const billables = await Billable.find({ userId }).distinct('_id');
+    if (!billables.length) return res.json([]);
+
+    const invoices = await Invoice.find({ 'items.billableId': { $in: billables } })
       .populate('clientId caseId items.billableId createdBy')
       .sort({ createdAt: -1 });
+
     res.json(invoices);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch invoices for user' });

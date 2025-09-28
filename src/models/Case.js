@@ -8,6 +8,8 @@ const CaseSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   assignedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   primaryLawyerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  case_type: { type: String, required: true, trim: true },
+  case_type_id: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
 });
 
 const Case = mongoose.model('Case', CaseSchema);

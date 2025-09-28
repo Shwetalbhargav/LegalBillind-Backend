@@ -3,6 +3,7 @@ import Billable from '../models/Billable.js';
 import EmailEntry from '../models/EmailEntry.js';
 import User from '../models/User.js';
 import Firm from '../models/Firm.js';
+import Case from '../models/Case.js';
 
 // Map from activityCode → category (fallbacks to keep data consistent)
 const CATEGORY_BY_CODE = {
@@ -128,6 +129,17 @@ export const getAllBillables = async (req, res) => {
     if (req.query.userId)    filters.userId = req.query.userId;
     if (req.query.status)    filters.status = req.query.status;
 
+    
+    
+    const { caseType, caseTypeId } = req.query;
+     if (caseType || caseTypeId) {
+     const q = {};
+     if (caseType)   q.case_type = caseType;
+     if (caseTypeId) q.case_type_id = caseTypeId;
+    const caseIds = await Case.find(q).distinct('_id');
+     filters.caseId = { $in: caseIds };
+    }
+
     // optional date range
     const { from, to } = req.query;
     if (from || to) {
@@ -136,6 +148,7 @@ export const getAllBillables = async (req, res) => {
       if (to)   filters.date.$lte = new Date(to);
     }
 
+    
     const docs = await Billable.find(filters)
       .populate('clientId caseId userId')
       .sort({ date: -1 });
@@ -145,6 +158,10 @@ export const getAllBillables = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch billables' });
   }
 };
+
+
+
+
 
 export const getBillableById = async (req, res) => {
   try {

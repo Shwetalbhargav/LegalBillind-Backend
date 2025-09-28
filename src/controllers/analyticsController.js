@@ -45,4 +45,29 @@ export const getUnbilledBillables = async (req, res) => {
   }
 };
 
+export const getBillableStatsByCaseType = async (req, res) => {
+  try {
+    const pipeline = [
+      { $lookup: { from: 'cases', localField: 'caseId', foreignField: '_id', as: 'case' } },
+      { $unwind: '$case' },
+      // Optional filter: only a specific case type
+      ...(req.query.caseType ? [{ $match: { 'case.case_type': req.query.caseType } }] : []),
+      ...(req.query.caseTypeId ? [{ $match: { 'case.case_type_id': new mongoose.Types.ObjectId(req.query.caseTypeId) } }] : []),
+      {
+        $group: {
+          _id: '$case.case_type',
+          totalHours: { $sum: { $divide: ['$durationMinutes', 60] } },
+          totalValue: { $sum: '$amount' },
+          entries: { $sum: 1 }
+        }
+      },
+      { $sort: { totalValue: -1 } }
+    ];
+    const data = await Billable.aggregate(pipeline);
+    res.json({ summaryByCaseType: data });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to compute billable stats by case type' });
+  }
+};
+
 
