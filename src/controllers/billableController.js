@@ -159,8 +159,22 @@ export const getAllBillables = async (req, res) => {
   }
 };
 
-
-
+export const createBillableFromEmail = async (req, res, next) => {
+  try {
+    const { emailEntryId } = req.params;
+    const entry = await EmailEntry.findById(emailEntryId);
+    if (!entry) return res.status(404).json({ success:false, message:'Email entry not found' });
+    // Example mapping; adjust fields to your schema
+    const billable = await Billable.create({
+      client: entry.client,
+      case: entry.case,
+      description: entry.subject || 'Email work',
+      minutes: entry.estimatedMinutes ?? 6,
+      source: { type: 'email', id: entry._id }
+    });
+    res.status(201).json({ success:true, billable });
+  } catch (err) { next(err); }
+};
 
 
 export const getBillableById = async (req, res) => {

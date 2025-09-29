@@ -136,3 +136,11 @@ export const listCaseTypes = async (_req, res) => {
     res.status(500).json({ error: 'Failed to fetch case types' });
   }
 };
+
+export const getCasesByClient = async (req, res, next) => {
+  try {
+    const { clientId } = req.params;
+    const cases = await Case.find({ client: clientId }).sort({ createdAt: -1 });
+    res.json({ success: true, cases });
+  } catch (err) { next(err); }
+};

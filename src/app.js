@@ -16,7 +16,7 @@ import invoiceRoutes from './routes/invoiceRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import caseRoutes from './routes/caseRoutes.js';
 import userRoutes from "./routes/userRoutes.js";
-
+import aiRoutes from './routes/aiRoutes.js';
 const app = express();
 app.set('trust proxy', 1);
 app.get('/healthz', (req, res) => res.json({ ok: true }));
@@ -55,5 +55,5 @@ app.use('/api/clio-sync', clioSyncRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/clio', clioAuthRoutes);
 app.use("/api/users", userRoutes);
-
+app.use('/api/ai', aiRoutes);
 export default app;
