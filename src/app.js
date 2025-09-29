@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import connectDB from './config/db.js';
-
+import cookieParser from "cookie-parser";
 import clioSyncRoutes from './routes/clioSync.js';
 import emailEntryRoutes from './routes/emailEntry.js';
 import clioAuthRoutes from './routes/clioAuth.js';
@@ -15,7 +15,7 @@ import clientRoutes from './routes/clientRoutes.js';
 import invoiceRoutes from './routes/invoiceRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import caseRoutes from './routes/caseRoutes.js';
-
+import userRoutes from "./routes/userRoutes.js";
 
 const app = express();
 app.set('trust proxy', 1);
@@ -42,7 +42,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
-
+app.use(cookieParser());
 
 // mounts — PATHS ONLY
 app.use('/api/email-entry', emailEntryRoutes);
@@ -54,5 +54,6 @@ app.use('/api/cases', caseRoutes);
 app.use('/api/clio-sync', clioSyncRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/clio', clioAuthRoutes);
+app.use("/api/users", userRoutes);
 
 export default app;
