@@ -1,7 +1,7 @@
 // routes/userRoutes.js
 import express from "express";
 import { authenticate, authorize } from "../middleware/auth.js";
-import { listUsers, getMe } from "../controllers/userController.js";
+import { listUsers, getMe, createUser, updateUser, deleteUser  } from "../controllers/userController.js";
 
 const router = express.Router();
 
@@ -11,5 +11,7 @@ router.get("/me", authenticate, getMe);
 // Fetch users for frontend with role filter, etc.
 // Example policy: only 'admin' and 'partner' can list users
 router.get("/", authenticate, authorize("admin", "partner"), listUsers);
-
+router.post("/", authenticate, authorize("admin", "partner"), createUser);
+router.put("/:id", authenticate, authorize("admin", "partner"), updateUser);
+router.delete("/:id", authenticate, authorize("admin", "partner"), deleteUser);
 export default router;

@@ -17,6 +17,11 @@ import analyticsRoutes from './routes/analyticsRoutes.js';
 import caseRoutes from './routes/caseRoutes.js';
 import userRoutes from "./routes/userRoutes.js";
 import aiRoutes from './routes/aiRoutes.js';
+import partnerProfileRoutes from './routes/partnerProfileRoutes.js';
+import lawyerProfileRoutes from './routes/lawyerProfileRoutes.js';
+import internProfileRoutes from './routes/internProfileRoutes.js';
+import associateProfileRoutes from './routes/associateProfileRoutes.js';
+
 const app = express();
 app.set('trust proxy', 1);
 app.get('/healthz', (req, res) => res.json({ ok: true }));
@@ -56,4 +61,9 @@ app.use('/api/auth', authRoutes);
 app.use('/clio', clioAuthRoutes);
 app.use("/api/users", userRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/partner-profiles', partnerProfileRoutes);
+app.use('/api/lawyer-profiles', lawyerProfileRoutes);
+app.use('/api/intern-profiles', internProfileRoutes);
+app.use('/api/associate-profiles', associateProfileRoutes);
+
 export default app;

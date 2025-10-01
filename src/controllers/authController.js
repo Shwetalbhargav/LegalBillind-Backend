@@ -2,11 +2,15 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 
-// LOGIN
+// LOGIN —  uses name + mobile + password + role
 export const loginUser = async (req, res) => {
-  const { email, password } = req.body;
+  const { name, mobile, password, role } = req.body;
   try {
-    const user = await User.findOne({ email });
+    if (!name || !mobile || !password || !role) {
+      return res.status(400).json({ error: "Name, mobile, password and role are required" });
+    }
+
+    const user = await User.findOne({ name, mobile, role });
     if (!user) return res.status(400).json({ error: "Invalid credentials" });
 
     const isMatch = await bcrypt.compare(password, user.passwordHash);
@@ -19,17 +23,24 @@ export const loginUser = async (req, res) => {
     );
 
     res.cookie("token", token, {
-  httpOnly: true,
-  secure: true,        // required over https
-  sameSite: "none",    // because site = vercel.app, api = onrender.com
-  path: "/",
-  maxAge: 7*24*60*60*1000,
-});
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
 
     res.json({
       success: true,
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: {
+        id: user._id,
+        name: user.name,
+        mobile: user.mobile,
+        role: user.role,
+        address: user.address,
+        qualifications: user.qualifications,
+      },
     });
   } catch (err) {
     console.error("Login error:", err);
@@ -37,17 +48,42 @@ export const loginUser = async (req, res) => {
   }
 };
 
-// REGISTER (basic, no email verification)
+// REGISTER — all fields of User schema
 export const registerUser = async (req, res) => {
-  const { name, email, password, role } = req.body;
   try {
-    const existing = await User.findOne({ email });
-    if (existing) return res.status(400).json({ error: "User already exists" });
+    const { name, email, mobile, address, role, password, firmId, qualifications } = req.body;
+
+    if (!name || !mobile || !password || !role) {
+      return res.status(400).json({ error: "Name, mobile, password and role are required" });
+    }
+
+    const existing = await User.findOne({ name, mobile, role });
+    if (existing) return res.status(400).json({ error: "User already exists with this name and mobile" });
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await User.create({ name, email, role, passwordHash });
 
-    res.status(201).json({ success: true, user: { id: user._id, email: user.email } });
+    const user = await User.create({
+      name,
+      email,
+      mobile,
+      address,
+      role,
+      firmId,
+      passwordHash,
+      qualifications,
+    });
+
+    res.status(201).json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        mobile: user.mobile,
+        role: user.role,
+        address: user.address,
+        qualifications: user.qualifications,
+      },
+    });
   } catch (err) {
     console.error("Register error:", err);
     res.status(500).json({ error: "Server error" });
