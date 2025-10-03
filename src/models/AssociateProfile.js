@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 const AssociateProfileSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
-  specialization: String,
+  specialization: { type: [String], default: [] },
   experienceYears: Number,
   achievements: [
     { title: String, year: Number, description: String }

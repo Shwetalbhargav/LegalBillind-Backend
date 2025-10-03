@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 const LawyerProfileSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
-  specialization: String,
+  specialization: { type: [String], default: [] },
   experienceYears: Number,
   landmarkCases: [
     { caseTitle: String, year: Number, description: String }
