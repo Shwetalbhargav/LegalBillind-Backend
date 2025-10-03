@@ -10,7 +10,7 @@ import {
   updatePartnerProfileById,     // admin, via body { id, ...updates }
   deletePartnerProfileById      // admin, via body { id }
 } from "../controllers/partnerProfileController.js";
-import { authenticate, authorize } from "../middleware/authMiddleware.js";
+import { authenticate, authorize } from "../middleware/auth.js";
 
 const router = express.Router();
 
