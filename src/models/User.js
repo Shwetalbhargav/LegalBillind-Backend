@@ -13,7 +13,7 @@ const UserSchema = new mongoose.Schema({
   photoUrl: { type: String, default: '/images/default-user.jpg' },
 
   // 🔹 New universal fields
-  mobile: { type: String },
+  mobile: { type: String ,required: true},
   address: { type: String },
   qualifications: [
     {
