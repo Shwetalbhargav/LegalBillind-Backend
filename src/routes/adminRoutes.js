@@ -1,19 +1,32 @@
-// File: routes/adminRoutes.js
+// routes/adminRoutes.js
 import express from "express";
-import { registerAdmin, loginAdmin, getMe, updateMe, getDashboard } from "../controllers/adminController.js";
+import {
+  registerAdmin,
+  loginAdmin,
+  getMe,
+  updateMe,
+  getDashboard,
+} from "../controllers/adminController.js";
 import { protect, adminOnly } from "../middleware/auth.js";
 
 const router = express.Router();
 
-// Auth
+/**
+ * Auth
+ */
 router.post("/register", registerAdmin);
 router.post("/login", loginAdmin);
 
-// Me
+/**
+ * Profile (authenticated + admin)
+ * If you later want non-admin staff to access /me, swap `adminOnly` with role(s) you prefer.
+ */
 router.get("/me", protect, adminOnly, getMe);
 router.patch("/me", protect, adminOnly, updateMe);
 
-// Dashboard
+/**
+ * Dashboard (admin only)
+ */
 router.get("/dashboard", protect, adminOnly, getDashboard);
 
 export default router;
