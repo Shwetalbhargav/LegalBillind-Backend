@@ -21,6 +21,7 @@ import partnerProfileRoutes from './routes/partnerProfileRoutes.js';
 import lawyerProfileRoutes from './routes/lawyerProfileRoutes.js';
 import internProfileRoutes from './routes/internProfileRoutes.js';
 import associateProfileRoutes from './routes/associateProfileRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -65,5 +66,6 @@ app.use('/api/partner-profiles', partnerProfileRoutes);
 app.use('/api/lawyer-profiles', lawyerProfileRoutes);
 app.use('/api/intern-profiles', internProfileRoutes);
 app.use('/api/associate-profiles', associateProfileRoutes);
+app.use('/api/admin', adminRoutes);
 
 export default app;
