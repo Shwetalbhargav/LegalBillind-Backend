@@ -8,7 +8,7 @@ export const CaseAssignmentController = {
   // POST /case-assignments
   async assign(req, res) {
     try {
-      const { caseId, userId, roleOnCase, startAt, endAt } = req.body;
+      const { caseId, userId, role, startAt, endAt } = req.body;
 
       if (!caseId || !userId || !roleOnCase) {
         return res.status(400).json({ ok: false, message: 'caseId, userId, and roleOnCase are required' });
@@ -26,7 +26,7 @@ export const CaseAssignmentController = {
       const assignment = await CaseAssignment.create({
         caseId,
         userId,
-        roleOnCase,
+        role,
         startAt,
         endAt
       });

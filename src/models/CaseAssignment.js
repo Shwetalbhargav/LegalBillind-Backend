@@ -23,4 +23,6 @@ CaseAssignmentSchema.index({ caseId: 1, userId: 1 }, { unique: true });
 CaseAssignmentSchema.index({ firmId: 1, clientId: 1, status: 1 });
 CaseAssignmentSchema.index({ caseId: 1, status: 1 });
 
-module.exports = mongoose.model('CaseAssignment', CaseAssignmentSchema);
+const CaseAssignment = mongoose.model('CaseAssignment', CaseAssignmentSchema);
+
+export default CaseAssignment;
