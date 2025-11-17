@@ -1,4 +1,5 @@
-// controllers/lawyerProfileController.js
+//src/controllers/lawyerProfileController.js
+
 import LawyerProfile from "../models/LawyerProfile.js";
 import User from "../models/User.js";
 import mongoose from "mongoose";

@@ -1,3 +1,5 @@
+// src/models/LawyerProfile.js
+
 import mongoose from 'mongoose';
 
 const LawyerProfileSchema = new mongoose.Schema({

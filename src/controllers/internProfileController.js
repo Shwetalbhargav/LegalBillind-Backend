@@ -1,4 +1,5 @@
-// controllers/internProfileController.js
+//src/controllers/internProfileController.js
+
 import InternProfile from "../models/InternProfile.js";
 import User from "../models/User.js";
 import mongoose from "mongoose";

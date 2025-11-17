@@ -1,3 +1,5 @@
+// src/routes/partnerProfileRoutes.js
+
 import express from "express";
 import {
   createPartnerProfile,

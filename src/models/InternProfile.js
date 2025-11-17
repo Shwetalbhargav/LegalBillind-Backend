@@ -1,3 +1,5 @@
+// src/models/InternProfile.js
+
 import mongoose from 'mongoose';
 
 const InternProfileSchema = new mongoose.Schema({

@@ -1,92 +1,58 @@
-import mongoose from 'mongoose';
+// src/models/Invoice.js
 
-const PaymentSchema = new mongoose.Schema(
-  {
-    amount:    { type: Number, required: true, min: 0 },
-    date:      { type: Date,   required: true }, // date of payment
-    method:    {
-      type: String,
-      enum: ['bank_transfer', 'cheque', 'cash', 'card', 'upi', 'wallet', 'other'],
-      required: true
-    },
-    reference: { type: String, trim: true },     // txn id / cheque no / UTR
-    receivedBy:{ type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    notes:     { type: String, trim: true }
-  },
-  { _id: false }
-);
+import mongoose from 'mongoose';
 
 const InvoiceSchema = new mongoose.Schema(
   {
-    clientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', required: true },
-    caseId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Case', required: true },
+    clientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', required: true, index: true },
+    caseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Case' },
 
-    items: [{
-      billableId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Billable', required: true },
-      description:      { type: String },
-      durationMinutes:  { type: Number },
-      rate:             { type: Number },
-      amount:           { type: Number }
-    }],
+    periodStart: { type: Date },
+    periodEnd: { type: Date },
 
-    // Financials
-    subtotal:     { type: Number, default: 0 },
-    taxAmount:    { type: Number, default: 0 },
-    totalAmount:  { type: Number, required: true }, // subtotal + tax - discounts
-    amountPaid:   { type: Number, default: 0, min: 0 }, // maintained from payments[]
-    payments:     { type: [PaymentSchema], default: [] },
-    currency:     { type: String, default: 'INR' },
-
-    // Dates
     issueDate: { type: Date, default: Date.now },
-    dueDate:   { type: Date },
+    dueDate: { type: Date },
 
-    // Lifecycle
-    status: {
-      type: String,
-      enum: ['draft', 'sent', 'partial', 'paid', 'overdue', 'void'],
-      default: 'draft',
-      index: true
-    },
+    currency: { type: String, default: 'INR' },
 
-    notes:     { type: String },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+    subtotal: { type: Number, default: 0 },
+    tax: { type: Number, default: 0 },
+    total: { type: Number, required: true },
+
+    status: { type: String, enum: ['draft', 'sent', 'partial', 'paid', 'overdue', 'void'], default: 'draft', index: true },
+    pdfUrl: { type: String },
+
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+    items: [
+      { 
+        billableId: { type: mongoose.Schema.Types.ObjectId, ref: 'Billable', index: true  },
+         description: String, durationMinutes: Number, rate: Number, amount: Number },
+    ],
   },
   { timestamps: true }
 );
 
-// Virtuals
-InvoiceSchema.virtual('balance').get(function () {
-  const paid = this.amountPaid || 0;
-  return Math.max(0, (this.totalAmount || 0) - paid);
-});
-InvoiceSchema.set('toJSON', { virtuals: true });
-InvoiceSchema.set('toObject', { virtuals: true });
-
-// Keep amountPaid and status in sync with payments / due date
-InvoiceSchema.pre('save', function (next) {
-  // sync amountPaid
-  if (Array.isArray(this.payments)) {
-    this.amountPaid = this.payments.reduce((s, p) => s + (p.amount || 0), 0);
-  }
-
-  // auto-status (except 'void')
-  if (this.status !== 'void') {
-    const total = this.totalAmount || 0;
-    const now   = new Date();
-
-    if (this.amountPaid >= total)       this.status = 'paid';
-    else if (this.amountPaid > 0)       this.status = 'partial';
-    else if (this.dueDate && this.dueDate < now) this.status = 'overdue';
-    else if (this.status === 'draft')   this.status = 'draft';
-    else                                this.status = 'sent';
-  }
+InvoiceSchema.pre('validate', function(next) {
+  const items = this.items || [];
+  const subtotal = items.reduce((s, i) => s + (i.amount || 0), 0);
+  this.subtotal = Math.round(subtotal * 100) / 100;
+  const tax = this.tax || 0;
+  this.total = Math.round((this.subtotal + tax) * 100) / 100;
   next();
-});
+  });
 
-// Helpful indexes
+InvoiceSchema.methods.computeStatus = function (paidAmount = 0) {
+  if (this.status === 'void') return 'void';
+  const total = this.total || 0;
+  const now = new Date();
+  if (paidAmount >= total) return 'paid';
+  if (paidAmount > 0) return 'partial';
+  if (this.dueDate && this.dueDate < now) return 'overdue';
+  return this.status === 'draft' ? 'draft' : 'sent';
+};
+
 InvoiceSchema.index({ clientId: 1, status: 1, issueDate: 1 });
 InvoiceSchema.index({ caseId: 1, status: 1 });
 
-const Invoice = mongoose.model('Invoice', InvoiceSchema);
-export default Invoice;
+export const Invoice = mongoose.model('Invoice', InvoiceSchema);

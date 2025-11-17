@@ -1,24 +1,40 @@
-
-import express from 'express';
+// src/routes/caseRoutes.js
+import { Router } from 'express';
 import {
   createCase,
   getAllCases,
   getCaseById,
   updateCase,
   deleteCase,
-  listCaseTypes,
-  getCasesByClient
+  transitionStatus,
+  listCaseTimeEntries,
+  listCaseInvoices,
+  listCasePayments,
+  caseRollup,
+  getCasesByClient,
 } from '../controllers/caseController.js';
 
-const router = express.Router();
+const router = Router();
 
-router.get('/', getAllCases);
-router.post('/create', createCase);
-router.get('/__meta/case-types', listCaseTypes);
-router.get('/client/:clientId', getCasesByClient);
-router.get('/:caseId', getCaseById);
-router.put('/:caseId/update', updateCase);
-router.delete('/:caseId/delete', deleteCase);
-router.get('/__meta/case-types', listCaseTypes);
+// CRUD
+router.post('/cases', createCase);
+router.get('/cases', getAllCases);
+router.get('/cases/:caseId', getCaseById);
+router.put('/cases/:caseId', updateCase);
+router.delete('/cases/:caseId', deleteCase);
+
+// Status transition
+router.patch('/cases/:caseId/status', transitionStatus);
+
+// Related lists
+router.get('/cases/:caseId/time-entries', listCaseTimeEntries);
+router.get('/cases/:caseId/invoices', listCaseInvoices);
+router.get('/cases/:caseId/payments', listCasePayments);
+
+// Rollup (WIP/Billed/AR)
+router.get('/cases/:caseId/rollup', caseRollup);
+
+// Convenience
+router.get('/cases/by-client/:clientId', getCasesByClient);
 
 export default router;

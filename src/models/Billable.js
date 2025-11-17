@@ -5,6 +5,7 @@ const BillableSchema = new mongoose.Schema({
   caseId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Case', required: true },
   clientId: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', required: true },
   userId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  activityId: { type: mongoose.Schema.Types.ObjectId, ref: 'Activity', index: true },
 
   // Added to match frontend/controller
   subject: { type: String },
@@ -47,9 +48,19 @@ const BillableSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
+BillableSchema.pre('validate', function(next) {
+  if ((this.amount == null || this.amount === 0) && this.rate != null && this.durationMinutes != null) {
+    this.amount = Math.round((this.rate * (this.durationMinutes / 60)) * 100) / 100;
+  }
+  next();
+});
+
 BillableSchema.virtual('hours').get(function () {
   return this.durationMinutes / 60;
 });
 
+BillableSchema.index({ clientId: 1, caseId: 1, date: -1 });
+BillableSchema.index({ userId: 1, date: -1 });
+BillableSchema.index({ activityId: 1, date: -1 });
 const Billable = mongoose.model('Billable', BillableSchema);
 export default Billable;

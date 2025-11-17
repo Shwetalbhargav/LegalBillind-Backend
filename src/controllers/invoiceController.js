@@ -1,256 +1,231 @@
-// controllers/invoiceController.js
+// src/controllers/invoiceController.js
 import mongoose from 'mongoose';
-import Invoice from '../models/Invoice.js';
-import Billable from '../models/Billable.js';
-import EmailEntry from '../models/EmailEntry.js';
-import Case from '../models/Case.js';
+import { Invoice } from '../models/Invoice.js';
+import { InvoiceLine } from '../models/InvoiceLine.js';
+import { TimeEntry } from '../models/TimeEntry.js';
 
 /**
- * POST /api/invoices
- * Accepts either:
- *   - { clientId, caseId, billableIds: [...], dueDate?, notes?, currency?, createdBy? }
- *   - { clientId, caseId, emailEntryIds: [...], defaultRate?, dueDate?, notes?, currency?, createdBy? }
- * Computes per-item amount and totalAmount when needed.
+ * Utility: recalc invoice totals from InvoiceLine rows
  */
-export const createInvoice = async (req, res) => {
-  try {
-    const {
-      clientId, caseId, billableIds = [], emailEntryIds = [],
-      defaultRate, dueDate, notes, currency = 'USD', createdBy
-    } = req.body;
+async function recalcTotals(invoiceId) {
+  const lines = await InvoiceLine.find({ invoiceId });
+  const subtotal = lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+  const tax = 0; // extend later if you add tax rules
+  const total = Number((subtotal + tax).toFixed(2));
+  await Invoice.findByIdAndUpdate(invoiceId, { subtotal, tax, total });
+  return { subtotal, tax, total };
+}
 
-    if (!clientId || !caseId) {
-      return res.status(400).json({ error: 'clientId and caseId are required' });
-    }
-
-    let items = [];
-
-    if (Array.isArray(billableIds) && billableIds.length) {
-      // Strategy A: from Billables
-      const billables = await Billable.find({ _id: { $in: billableIds } });
-      if (!billables.length) return res.status(422).json({ error: 'No billables found' });
-
-      items = billables.map(b => ({
-        billableId: b._id,
-        description: b.description,
-        durationMinutes: typeof b.durationMinutes === 'number' ? b.durationMinutes : (b.durationHours || 0) * 60,
-        rate: b.rate,
-        amount: typeof b.amount === 'number'
-          ? b.amount
-          : Number((((b.rate || 0) * ((b.durationMinutes ?? (b.durationHours || 0) * 60))) / 60).toFixed(2))
-      }));
-    } else if (Array.isArray(emailEntryIds) && emailEntryIds.length) {
-      // Strategy B: from EmailEntries
-      const entries = await EmailEntry.find({ _id: { $in: emailEntryIds } });
-      if (entries.length !== emailEntryIds.length) {
-        return res.status(404).json({ error: 'One or more EmailEntry ids not found' });
-      }
-
-      items = entries.map(e => {
-        const durationMinutes = e.typingTimeMinutes || 0;
-        const rate = typeof e.rate === 'number' ? e.rate : defaultRate;
-        const amount = (rate && durationMinutes)
-          ? Number(((rate * durationMinutes) / 60).toFixed(2))
-          : 0;
-
-        return {
-          // billableId omitted intentionally when invoicing email-only items
-          description: e.billableSummary || e.subject || `Email with ${e.recipient}`,
-          durationMinutes,
-          rate,
-          amount
-        };
-      });
-    } else {
-      return res.status(400).json({ error: 'Provide billableIds[] or emailEntryIds[]' });
-    }
-
-    // Compute total
-    const totalAmount = Number(items.reduce((s, it) => s + (it.amount || 0), 0).toFixed(2));
-
-    const invoice = await Invoice.create({
-      clientId,
-      caseId,
-      items,
-      totalAmount,
-      currency,
-      dueDate,
-      notes,
-      createdBy
-    });
-
-    return res.status(201).json(invoice);
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Failed to create invoice' });
-  }
-};
-
+/**
+ * GET /api/invoices/:id
+ */
 export const getInvoiceById = async (req, res) => {
   try {
     const invoice = await Invoice.findById(req.params.id)
-      .populate('clientId caseId items.billableId createdBy');
+      .populate('clientId caseId createdBy');
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-    res.json(invoice);
+
+    const lines = await InvoiceLine.find({ invoiceId: invoice._id })
+      .populate('timeEntryId');
+
+    res.json({ ...invoice.toObject(), lines });
   } catch (error) {
+    console.error(error);
     res.status(500).json({ error: 'Failed to fetch invoice' });
   }
 };
 
 /**
  * GET /api/invoices
- * Filters:
- *   - clientId, status
- *   - pending=true (sent/partial/overdue)
- *   - from, to (issueDate range)
- *   - caseType, caseTypeId (filters via Cases)
+ * Filters: clientId, caseId, status, from, to
  */
 export const getAllInvoices = async (req, res) => {
   try {
-    const { caseType, caseTypeId, clientId, status, from, to, pending } = req.query;
-
+    const { clientId, caseId, status, from, to } = req.query;
     const filter = {};
-
     if (clientId) filter.clientId = clientId;
-
-    // pending = any non-void invoice with positive balance
-    if (pending === 'true') {
-      filter.status = { $in: ['sent', 'partial', 'overdue'] };
-    } else if (status) {
-      filter.status = status;
-    }
-
+    if (caseId) filter.caseId = caseId;
+    if (status) filter.status = status;
     if (from || to) {
       filter.issueDate = {};
       if (from) filter.issueDate.$gte = new Date(from);
-      if (to)   filter.issueDate.$lte = new Date(to);
-    }
-
-    // Filter by case type (label or id)
-    if (caseType || caseTypeId) {
-      const q = {};
-      if (caseType) q.case_type = caseType.trim();
-      if (caseTypeId) {
-        if (!mongoose.Types.ObjectId.isValid(caseTypeId)) {
-          return res.status(400).json({ error: 'Invalid caseTypeId' });
-        }
-        q.case_type_id = new mongoose.Types.ObjectId(caseTypeId);
-      }
-      const caseIds = await Case.find(q).distinct('_id');
-      if (!caseIds.length) return res.json([]); // nothing matches
-      filter.caseId = { $in: caseIds };
+      if (to) filter.issueDate.$lte = new Date(to);
     }
 
     const invoices = await Invoice.find(filter)
-      .populate('clientId caseId items.billableId createdBy')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .populate('clientId caseId createdBy');
 
     res.json(invoices);
   } catch (error) {
+    console.error(error);
     res.status(500).json({ error: 'Failed to fetch invoices' });
   }
 };
 
 /**
- * POST /api/invoices/:id/payments
- * Body: { amount, date, method, reference?, receivedBy?, notes? }
+ * POST /api/invoices/from-time
+ * Body: { clientId, caseId, timeEntryIds: [] }
+ * Generates an invoice from APPROVED TimeEntries, creates InvoiceLine rows, updates TimeEntry.status -> 'billed'.
  */
-export const addPayment = async (req, res) => {
+export const generateFromApprovedTime = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const { clientId, caseId, timeEntryIds = [], currency = 'INR', dueDate, periodStart, periodEnd, createdBy } = req.body;
+
+    if (!clientId || !Array.isArray(timeEntryIds) || timeEntryIds.length === 0) {
+      return res.status(400).json({ error: 'clientId and timeEntryIds[] are required' });
+    }
+
+    const entries = await TimeEntry.find({ _id: { $in: timeEntryIds } }).session(session);
+    if (entries.length !== timeEntryIds.length) {
+      return res.status(404).json({ error: 'One or more time entries not found' });
+    }
+
+    // Validate all entries are approved, belong to the same client/case
+    for (const e of entries) {
+      if (e.status !== 'approved') {
+        await session.abortTransaction();
+        return res.status(400).json({ error: 'All time entries must be in approved status' });
+      }
+      if (String(e.clientId) !== String(clientId)) {
+        await session.abortTransaction();
+        return res.status(400).json({ error: 'All time entries must match the provided clientId' });
+      }
+      if (caseId && String(e.caseId) !== String(caseId)) {
+        await session.abortTransaction();
+        return res.status(400).json({ error: 'All time entries must match the provided caseId' });
+      }
+    }
+
+    // Create invoice shell
+    const invoice = await Invoice.create([{
+      clientId,
+      caseId: caseId || entries[0].caseId,
+      periodStart: periodStart || undefined,
+      periodEnd: periodEnd || undefined,
+      issueDate: new Date(),
+      dueDate: dueDate || undefined,
+      currency,
+      subtotal: 0,
+      tax: 0,
+      total: 0,
+      status: 'draft',
+      createdBy
+    }], { session });
+    const inv = invoice[0];
+
+    // Create lines
+    const linesToInsert = entries.map(e => {
+      const qtyHours = Number(((e.billableMinutes || 0) / 60).toFixed(2));
+      const rate = Number(e.rateApplied || 0);
+      const amount = Number((rate * qtyHours).toFixed(2));
+      return {
+        invoiceId: inv._id,
+        timeEntryId: e._id,
+        description: e.narrative || 'Professional services',
+        qtyHours,
+        rate,
+        amount,
+      };
+    });
+    await InvoiceLine.insertMany(linesToInsert, { session });
+
+    // Roll up totals
+    const totals = await recalcTotals(inv._id);
+
+    // Mark time entries as billed
+    await TimeEntry.updateMany(
+      { _id: { $in: timeEntryIds } },
+      { $set: { status: 'billed' } },
+      { session }
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+    res.status(201).json({ ...inv.toObject(), ...totals });
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error(error);
+    res.status(500).json({ error: 'Failed to generate invoice from time' });
+  }
+};
+
+/**
+ * POST /api/invoices/:id/send
+ * Body: { dueDate?, pdfUrl? }
+ * Sets status -> 'sent'. Optionally updates dueDate/pdfUrl.
+ */
+export const sendInvoice = async (req, res) => {
   try {
     const { id } = req.params;
-    const { amount, date, method, reference, receivedBy, notes } = req.body;
+    const { dueDate, pdfUrl } = req.body || {};
 
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ error: 'amount must be > 0' });
-    }
-    if (!date) {
-      return res.status(400).json({ error: 'date is required' });
-    }
+    const inv = await Invoice.findById(id);
+    if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+    if (inv.status === 'void') return res.status(400).json({ error: 'Cannot send a void invoice' });
 
-    const invoice = await Invoice.findById(id);
-    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-    if (invoice.status === 'void') return res.status(400).json({ error: 'Cannot pay a void invoice' });
+    if (dueDate) inv.dueDate = new Date(dueDate);
+    if (pdfUrl) inv.pdfUrl = pdfUrl;
+    inv.issueDate = inv.issueDate || new Date();
+    inv.status = 'sent';
 
-    // prevent overpayment
-    const newPaidTotal = (invoice.amountPaid || 0) + amount;
-    if (newPaidTotal - (invoice.totalAmount || 0) > 0.01) {
-      return res.status(400).json({ error: 'Payment exceeds invoice total' });
-    }
-
-    invoice.payments.push({ amount, date, method, reference, receivedBy, notes });
-    await invoice.save();
-
-    res.json(invoice);
-  } catch (err) {
-    res.status(400).json({ error: err.message || 'Failed to add payment' });
+    await inv.save();
+    res.json(inv);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to send invoice' });
   }
 };
 
 /**
- * GET /api/invoices/__analytics/pending-by-client
- * Returns totals per client for unpaid/partially paid/overdue invoices.
+ * POST /api/invoices/:id/void
  */
-export const getPendingSummaryByClient = async (_req, res) => {
+export const voidInvoice = async (req, res) => {
   try {
-    const pipeline = [
-      { $match: { status: { $in: ['sent', 'partial', 'overdue'] } } },
-      {
-        $project: {
-          clientId: 1,
-          totalAmount: 1,
-          amountPaid: 1,
-          balance: { $max: [ { $subtract: ['$totalAmount', '$amountPaid'] }, 0 ] }
-        }
-      },
+    const { id } = req.params;
+    const inv = await Invoice.findById(id);
+    if (!inv) return res.status(404).json({ error: 'Invoice not found' });
+    inv.status = 'void';
+    await inv.save();
+    res.json(inv);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to void invoice' });
+  }
+};
+
+/**
+ * GET /api/invoices/__pipeline
+ * Returns totals grouped by status for kanban/pipeline views.
+ */
+export const getPipeline = async (req, res) => {
+  try {
+    const { clientId, caseId } = req.query;
+    const match = {};
+    if (clientId) match.clientId = new mongoose.Types.ObjectId(clientId);
+    if (caseId) match.caseId = new mongoose.Types.ObjectId(caseId);
+
+    const agg = [
+      { $match: match },
       {
         $group: {
-          _id: '$clientId',
-          invoices:   { $sum: 1 },
-          totalBilled:{ $sum: '$totalAmount' },
-          totalPaid:  { $sum: '$amountPaid' },
-          totalDue:   { $sum: '$balance' }
+          _id: '$status',
+          count: { $sum: 1 },
+          total: { $sum: { $ifNull: ['$total', 0] } },
+          subtotal: { $sum: { $ifNull: ['$subtotal', 0] } }
         }
       },
-      { $sort: { totalDue: -1 } }
+      { $sort: { _id: 1 } }
     ];
 
-    const rows = await Invoice.aggregate(pipeline);
-
-    // populate client names
-    await Invoice.populate(rows, { path: '_id', model: 'Client', select: 'name' });
-    const mapped = rows.map(r => ({
-      clientId: r._id?._id || r._id,
-      clientName: r._id?.name,
-      invoices: r.invoices,
-      totalBilled: r.totalBilled,
-      totalPaid: r.totalPaid,
-      totalDue: r.totalDue
-    }));
-
-    res.json(mapped);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to build pending summary' });
-  }
-};
-
-/**
- * (kept for compatibility) GET /api/invoices/user/:userId
- * Returns invoices containing items linked to the user’s billables
- */
-export const getInvoicesByUser = async (req, res) => {
-  try {
-    const { userId } = req.params;
-
-    // find billables by user, then invoices referencing them
-    const billables = await Billable.find({ userId }).distinct('_id');
-    if (!billables.length) return res.json([]);
-
-    const invoices = await Invoice.find({ 'items.billableId': { $in: billables } })
-      .populate('clientId caseId items.billableId createdBy')
-      .sort({ createdAt: -1 });
-
-    res.json(invoices);
+    const rows = await Invoice.aggregate(agg);
+    const pipeline = rows.map(r => ({ status: r._id, count: r.count, subtotal: r.subtotal, total: r.total }));
+    res.json(pipeline);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch invoices for user' });
+    console.error(error);
+    res.status(500).json({ error: 'Failed to build pipeline' });
   }
 };

@@ -1,6 +1,8 @@
+//src/controllers/analyticsController.js
+import mongoose from 'mongoose';
 
 import Billable from '../models/Billable.js';
-import Invoice from '../models/Invoice.js';
+import {Invoice} from '../models/Invoice.js';
 
 export const getBillableStats = async (req, res) => {
   try {

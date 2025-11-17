@@ -1,7 +1,7 @@
-
+// src/routes/clioSync.js
 import express from 'express';
 import Billable from '../models/Billable.js';
-import Invoice from '../models/Invoice.js';
+import {Invoice} from '../models/Invoice.js';
 import { pushTimeEntryToClio, pushInvoiceToClio } from '../services/clioService.js';
 import { mapRecipientToMatter } from '../services/matterMapService.js';
 

@@ -1,125 +1,160 @@
-import Client from '../models/Client.js';
-import Case from '../models/Case.js';
-import Billable from '../models/Billable.js';
-import Invoice from '../models/Invoice.js';
+// src/controllers/clientController.js
+import { Client } from '../models/Client.js';
+import { Case } from '../models/Case.js';
+import { Invoice } from '../models/Invoice.js';
+import { Payment } from '../models/Payment.js';
+import { TimeEntry } from '../models/TimeEntry.js';
+import mongoose from 'mongoose';
 
-// GET /clients  -> list for dashboard table
-export const getAllClients = async (req, res) => {
+const toNumber = (v, d = 0) => (v === undefined || v === null || Number.isNaN(Number(v)) ? d : Number(v));
+
+export const getAllClients = async (_req, res) => {
   try {
     const clients = await Client.find()
-      .select('name email phone contactInfo createdAt accountManagerId')
-      .populate('accountManagerId', 'name email'); // <— populate for UI
-    res.json(clients);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch clients' });
+      .select('displayName email phone paymentTerms ownerUserId createdAt')
+      .populate('ownerUserId', 'name email');
+    res.json({ ok: true, data: clients });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: 'Failed to fetch clients' });
   }
 };
 
-// GET /clients/:clientId/dashboard  -> single client + related objects
-export const getClientDashboard = async (req, res) => {
-  const { clientId } = req.params;
+export const getClientById = async (req, res) => {
   try {
-    const [client, cases, billables, invoices] = await Promise.all([
-      Client.findById(clientId)
-        .populate('accountManagerId', 'name email')
-        .lean(),
-
-      // Case list for this client (include case type fields)
-      Case.find({ clientId })
-        .select('name case_type case_type_id status createdAt')
-        .sort({ createdAt: -1 })
-        .lean(),
-
-      // Billables (include case info so FE can show/filter by type)
-      Billable.find({ clientId })
-        .populate({ path: 'caseId', select: 'name case_type case_type_id status' })
-        .populate('userId', 'name email')
-        .sort({ date: -1 })
-        .lean(),
-
-      // Invoices (include case info so FE can show/filter by type)
-      Invoice.find({ clientId })
-        .populate({ path: 'caseId', select: 'name case_type case_type_id status' })
-        .populate('createdBy', 'name email')
-        .sort({ createdAt: -1 })
-        .lean(),
-    ]);
-
-    if (!client) return res.status(404).json({ error: 'Client not found' });
-
-    res.json({ client, cases, billables, invoices });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to load client dashboard' });
+    const client = await Client.findById(req.params.clientId)
+      .populate('ownerUserId', 'name email');
+    if (!client) return res.status(404).json({ ok: false, message: 'Client not found' });
+    res.json({ ok: true, data: client });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: 'Failed to fetch client' });
   }
 };
 
-
-// POST /clients/create
 export const createClient = async (req, res) => {
   try {
-    const {
-      name,
-      email,
-      phone,
-      contactInfo,        // optional legacy field — keep if you still use it anywhere
-      firmId,
-      accountManagerId,   // optional
-    } = req.body;
-
-    if (!name) return res.status(400).json({ error: 'name is required' });
-
-    // If contactInfo wasn’t sent but email was, keep them aligned for backwards-compat
-    const doc = new Client({
-      name,
-      email: email ?? null,
-      phone: phone ?? null,
-      contactInfo: contactInfo ?? email ?? null,
-      firmId: firmId || undefined,
-      accountManagerId: accountManagerId || undefined,
-    });
-
-    await doc.save();
-    res.status(201).json(doc);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to create client' });
+    const doc = await Client.create(req.body);
+    res.status(201).json({ ok: true, data: doc });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
   }
 };
 
-// PUT /clients/:clientId/update
 export const updateClient = async (req, res) => {
   try {
-    const { clientId } = req.params;
-
-    // Whitelist allowed fields so we don’t accidentally set unknown keys
-    const allowed = ['name', 'email', 'phone', 'contactInfo', 'firmId', 'accountManagerId'];
-    const updates = {};
-    for (const k of allowed) {
-      if (req.body[k] !== undefined) updates[k] = req.body[k];
-    }
-
-    // Keep contactInfo aligned if only email changed
-    if (updates.email !== undefined && updates.contactInfo === undefined) {
-      updates.contactInfo = updates.email;
-    }
-
-    const client = await Client.findByIdAndUpdate(clientId, updates, { new: true });
-    if (!client) return res.status(404).json({ error: 'Client not found' });
-
-    res.json(client);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update client' });
+    const updated = await Client.findByIdAndUpdate(req.params.clientId, req.body, { new: true });
+    if (!updated) return res.status(404).json({ ok: false, message: 'Client not found' });
+    res.json({ ok: true, data: updated });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
   }
 };
 
-// DELETE /clients/:clientId/delete
 export const deleteClient = async (req, res) => {
   try {
-    const { clientId } = req.params;
-    const deleted = await Client.findByIdAndDelete(clientId);
-    if (!deleted) return res.status(404).json({ error: 'Client not found' });
+    const deleted = await Client.findByIdAndDelete(req.params.clientId);
+    if (!deleted) return res.status(404).json({ ok: false, message: 'Client not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: 'Failed to delete client' });
+  }
+};
 
-    res.json({ message: 'Client deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete client' });
+// -------- owner mapping / payment terms --------
+export const assignOwner = async (req, res) => {
+  try {
+    const { ownerUserId, paymentTerms } = req.body; // either or both
+    const update = {};
+    if (ownerUserId) update.ownerUserId = new mongoose.Types.ObjectId(ownerUserId);
+    if (paymentTerms) update.paymentTerms = paymentTerms;
+
+    const updated = await Client.findByIdAndUpdate(req.params.clientId, update, { new: true })
+      .populate('ownerUserId', 'name email');
+
+    if (!updated) return res.status(404).json({ ok: false, message: 'Client not found' });
+    res.json({ ok: true, data: updated });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+};
+
+// -------- related lists --------
+export const listClientCases = async (req, res) => {
+  try {
+    const items = await Case.find({ clientId: req.params.clientId }).sort({ createdAt: -1 });
+    res.json({ ok: true, data: items });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+};
+
+export const listClientInvoices = async (req, res) => {
+  try {
+    const items = await Invoice.find({ clientId: req.params.clientId }).sort({ issueDate: -1 });
+    res.json({ ok: true, data: items });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+};
+
+export const listClientPayments = async (req, res) => {
+  try {
+    // payments for client invoices
+    const invoices = await Invoice.find({ clientId: req.params.clientId }).select('_id');
+    const ids = invoices.map(i => i._id);
+    const items = ids.length ? await Payment.find({ invoiceId: { $in: ids } }).sort({ receivedDate: -1 }) : [];
+    res.json({ ok: true, data: items });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+};
+
+// -------- client financial summary (WIP/Billed/AR) --------
+export const clientSummary = async (req, res) => {
+  try {
+    const clientId = req.params.clientId;
+    const clearedOnly = req.query.clearedOnly !== 'false';
+
+    // WIP: unbilled hours for all client cases (heuristic: submitted|approved)
+    const wipEntries = await TimeEntry.find({
+      clientId,
+      status: { $in: ['submitted', 'approved'] }
+    }).select('billableMinutes rateApplied amount');
+
+    const wip = wipEntries.reduce((sum, te) => {
+      const minutes = toNumber(te.billableMinutes, 0);
+      const rate = toNumber(te.rateApplied, 0);
+      const amt = typeof te.amount === 'number' ? te.amount : rate * (minutes / 60);
+      return sum + amt;
+    }, 0);
+
+    // Billed & payments
+    const invoices = await Invoice.find({
+      clientId,
+      status: { $in: ['draft', 'sent', 'partial', 'paid', 'overdue'] }
+    }).select('total');
+
+    const billed = invoices.reduce((s, i) => s + toNumber(i.total, 0), 0);
+
+    const ids = invoices.map(i => i._id);
+    let pQuery = { invoiceId: { $in: ids } };
+    if (clearedOnly) pQuery.status = 'cleared';
+
+    const payments = ids.length ? await Payment.find(pQuery).select('amount') : [];
+    const paid = payments.reduce((s, p) => s + toNumber(p.amount, 0), 0);
+
+    const ar = Math.max(0, billed - paid);
+
+    res.json({
+      ok: true,
+      data: {
+        clientId,
+        wip: +wip.toFixed(2),
+        billed: +billed.toFixed(2),
+        paid: +paid.toFixed(2),
+        ar: +ar.toFixed(2),
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: 'Failed to compute client summary' });
   }
 };

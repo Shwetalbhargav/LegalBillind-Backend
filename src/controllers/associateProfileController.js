@@ -1,4 +1,5 @@
-// controllers/associateProfileController.js
+//src/controllers/associateProfileController.js
+
 import AssociateProfile from "../models/AssociateProfile.js";
 import User from "../models/User.js";
 import mongoose from "mongoose";

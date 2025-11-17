@@ -1,8 +1,10 @@
+// src/routes/clioAuth.js
+
 import express from 'express';
 import axios from 'axios';
 import dotenv from 'dotenv';
 import qs from 'qs';
-import { saveOrUpdateToken } from '../services/clioTokenService.js';
+import { saveOrUpdateToken, getAccessToken  } from '../services/clioTokenService.js';
 
 dotenv.config();
 
@@ -91,5 +93,80 @@ router.get('/callback', async (req, res) => {
     `);
   }
 });
+
+// GET /clio/status
+router.get('/status', async (req, res) => {
+  try {
+    // Ensure the user is logged in
+    if (!req.user?._id) {
+      return res.status(401).json({
+        connected: false,
+        reason: 'not_logged_in'
+      });
+    }
+
+    const userId = req.user._id.toString();
+
+    let accessToken;
+    try {
+      // This will also refresh the token if expired
+      accessToken = await getAccessToken(userId);
+    } catch (err) {
+      console.error('Error getting Clio access token:', err.message);
+      return res.status(200).json({
+        connected: false,
+        reason: 'no_token'
+      });
+    }
+
+    if (!accessToken) {
+      return res.status(200).json({
+        connected: false,
+        reason: 'no_token'
+      });
+    }
+
+    // Simple test call: who am I in Clio
+    const whoRes = await axios.get(
+      'https://app.clio.com/api/v4/users/who_am_i',
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      }
+    );
+
+    const data = whoRes.data?.data || whoRes.data || {};
+
+    return res.json({
+      connected: true,
+      clioUser: {
+        id: data.id,
+        name: data.name,
+        email: data.email,
+        // these may or may not exist, so we guard them
+        tenant: data.tenant?.name ?? null,
+        account_type: data.account_type ?? null
+      },
+      raw: data // keep for debugging in UI; remove later if you want
+    });
+  } catch (err) {
+    console.error('Error checking Clio status:', err?.response?.data || err.message);
+
+    // Clio token invalid / revoked
+    if (err.response?.status === 401 || err.response?.status === 403) {
+      return res.status(200).json({
+        connected: false,
+        reason: 'invalid_or_revoked_token'
+      });
+    }
+
+    return res.status(500).json({
+      connected: false,
+      reason: 'server_error'
+    });
+  }
+});
+
 
 export default router;

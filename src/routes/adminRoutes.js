@@ -1,32 +1,37 @@
-// routes/adminRoutes.js
 import express from "express";
 import {
-  registerAdmin,
-  loginAdmin,
-  getMe,
-  updateMe,
-  getDashboard,
+  adminLogin,
+  adminRegister,
+  adminGetMe,
+  adminUpdateMe,
+  adminDashboard,
+  createAdmin,
+  listAdmins,
+  getAdmin,
+  updateAdmin,
+  deleteAdmin,
 } from "../controllers/adminController.js";
 import { protect, adminOnly } from "../middleware/auth.js";
 
 const router = express.Router();
 
-/**
- * Auth
- */
-router.post("/register", registerAdmin);
-router.post("/login", loginAdmin);
+/** Auth-style endpoints for Admins */
+router.post("/login", adminLogin);            // name+mobile+password (role enforced = admin)
+router.post("/register", adminRegister);      // create User(admin) + Admin profile
 
-/**
- * Profile (authenticated + admin)
- * If you later want non-admin staff to access /me, swap `adminOnly` with role(s) you prefer.
- */
-router.get("/me", protect, adminOnly, getMe);
-router.patch("/me", protect, adminOnly, updateMe);
+/** Self-service */
+router.patch("/me", protect, adminOnly, adminUpdateMe);
+// (Optional but handy) expose GET /me if you want:
+router.get("/me", protect, adminOnly, adminGetMe);
 
-/**
- * Dashboard (admin only)
- */
-router.get("/dashboard", protect, adminOnly, getDashboard);
+/** Dashboard */
+router.get("/dashboard", protect, adminOnly, adminDashboard);
+
+/** CRUD over Admin profiles (managed by admins) */
+router.post("/",    protect, adminOnly, createAdmin);
+router.get("/",     protect, adminOnly, listAdmins);
+router.get("/:id",  protect, adminOnly, getAdmin);
+router.patch("/:id",protect, adminOnly, updateAdmin);
+router.delete("/:id",protect, adminOnly, deleteAdmin);
 
 export default router;

@@ -1,23 +1,40 @@
- // routes/emailEntry.js
- import express from 'express';
- import {
-   createEmailEntry,
-   listEmailEntries,
-   getEmailEntryById,
-   pushEmailEntryToClio
- } from '../controllers/emailEntryController.js';
+// src/routes/emailEntryRoutes.js
+import { Router } from 'express';
+import {
+  createEmailEntry,
+  getEmailEntryById,
+  listEmailEntries,
+  updateEmailEntry,
+  deleteEmailEntry,
+  mapEmailEntry,
+  generateNarrative,
+  createActivityFromEmail,
+  createTimeEntryFromEmail,
+  pushEmailEntryToClio,
+  bulkIngest,
+} from '../controllers/emailEntryController.js';
 
- const router = express.Router();
+const router = Router();
 
- // LIST: GET /api/email-entry
- router.get('/', listEmailEntries);
+// Core ingest & listing
+router.post('/email-entries', createEmailEntry);
+router.get('/email-entries', listEmailEntries);
+router.get('/email-entries/:id', getEmailEntryById);
 
- // GET ONE: GET /api/email-entry/:id
- router.get('/:id', getEmailEntryById);
+// Maintenance
+router.patch('/email-entries/:id', updateEmailEntry);
+router.delete('/email-entries/:id', deleteEmailEntry);
 
- // CREATE: POST /api/email-entry
- router.post('/', createEmailEntry);
+// Mapping + GPT + derivatives
+router.post('/email-entries/:id/map', mapEmailEntry);
+router.post('/email-entries/:id/gpt-narrative', generateNarrative);
+router.post('/email-entries/:id/activity', createActivityFromEmail);
+router.post('/email-entries/:id/time-entry', createTimeEntryFromEmail);
 
- router.post('/:id/push-to-clio', pushEmailEntryToClio);
+// Integrations
+router.post('/email-entries/:id/push-clio', pushEmailEntryToClio);
 
- export default router;
+// Optional: batch ingest from the Chrome extension
+router.post('/email-entries/bulk', bulkIngest);
+
+export default router;

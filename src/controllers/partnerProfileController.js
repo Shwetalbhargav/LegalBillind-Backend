@@ -1,3 +1,5 @@
+//src/controllers/partnerProfileController.js
+
 import mongoose from "mongoose";
 import PartnerProfile from "../models/PartnerProfile.js";
 import User from "../models/User.js";

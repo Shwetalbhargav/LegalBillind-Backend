@@ -1,3 +1,5 @@
+// src/models/PartnerProfile.js
+
 import mongoose from 'mongoose';
 
 const PartnerProfileSchema = new mongoose.Schema({

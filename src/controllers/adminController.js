@@ -1,193 +1,252 @@
-// controllers/adminController.js
+//src/controllers/adminController.js
+
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import User from "../models/User.js";
 import Admin from "../models/admin.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
 
 function signToken(user) {
-  return jwt.sign(
-    { id: user._id.toString(), role: user.role, email: user.email },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
-  );
+  return jwt.sign({ id: user._id.toString(), role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+}
+function normName(s) { return (s || "").trim().replace(/\s+/g, " ").toLowerCase(); }
+
+function roleMeta(name) {
+  const displayName = name || "there";
+  return { welcomeMessage: `Welcome Admin ${displayName}!`, dashboardPath: "/admin/dashboard" };
 }
 
-function toSafeAdmin(adminDoc) {
-  const {
-    _id,
-    name,
-    email,
-    role,
-    firmId,
-    mobile,
-    address,
-    qualifications,
-    createdAt,
-    updatedAt,
-  } = adminDoc;
-  return {
-    id: _id,
-    name,
-    email,
-    role,
-    firmId,
-    mobile,
-    address,
-    qualifications,
-    createdAt,
-    updatedAt,
-  };
+function toSafeUser(u) {
+  if (!u) return null;
+  const { _id, name, email, role, firmId, mobile, createdAt, updatedAt } = u;
+  return { id: _id, name, email, role, firmId, mobile, createdAt, updatedAt };
 }
 
-/**
- * POST /api/admin/register
+function toSafeAdminProfile(a) {
+  if (!a) return null;
+  const { _id, userId, name, email, mobile, address, qualifications, firmId, createdAt, updatedAt } = a;
+  return { id: _id, userId, name, email, mobile, address, qualifications, firmId, createdAt, updatedAt };
+}
+
+/** POST /api/admin/login
+ * Body: { name, mobile, password }
+ * - Requires all 3
+ * - User.role must be "admin"
  */
-export const registerAdmin = async (req, res) => {
+export const adminLogin = async (req, res) => {
   try {
-    const { name, email, password, mobile, address, qualifications, firmId } =
-      req.body;
+    const { name, mobile, password } = req.body || {};
+    if (!name || !mobile || !password) return res.status(400).json({ message: "name, mobile and password are required" });
 
-    if (!name || !email || !password) {
-      return res
-        .status(400)
-        .json({ message: "name, email, and password are required" });
+    const user = await User.findOne({ mobile, role: "admin" });
+    if (!user) return res.status(401).json({ message: "Invalid credentials" });
+
+    if (normName(user.name) !== normName(name)) return res.status(401).json({ message: "Invalid credentials" });
+
+    const ok = await bcrypt.compare(password, user.passwordHash || "");
+    if (!ok) return res.status(401).json({ message: "Invalid credentials" });
+
+    const token = signToken(user);
+    if (process.env.SET_AUTH_COOKIE === "true") {
+      res.cookie("token", token, {
+        httpOnly: true, secure: process.env.NODE_ENV === "production",
+        sameSite: "lax", maxAge: 7 * 24 * 60 * 60 * 1000
+      });
     }
 
-    const existing = await Admin.findOne({ email });
-    if (existing) {
-      return res
-        .status(409)
-        .json({ message: "Admin with this email already exists" });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-
-    const admin = await Admin.create({
-      name,
-      email,
-      role: "admin",
-      firmId: firmId || undefined,
-      passwordHash,
-      mobile,
-      address,
-      qualifications,
+    const profile = await Admin.findOne({ userId: user._id });
+    const meta = roleMeta(user.name);
+    return res.status(200).json({
+      token,
+      user: toSafeUser(user),
+      profile: toSafeAdminProfile(profile),
+      ...meta,
     });
-
-    const token = signToken(admin);
-
-    // Optionally set an httpOnly cookie (keeps header flow working too)
-    if (process.env.SET_AUTH_COOKIE === "true") {
-      res.cookie("token", token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      });
-    }
-
-    return res.status(201).json({ token, admin: toSafeAdmin(admin) });
-  } catch (err) {
-    console.error("registerAdmin error", err);
-    return res.status(500).json({ message: "Unable to register admin" });
-  }
-};
-
-/**
- * POST /api/admin/login
- */
-export const loginAdmin = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res
-        .status(400)
-        .json({ message: "email and password are required" });
-    }
-
-    const admin = await Admin.findOne({ email });
-    if (!admin) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
-
-    const ok = await bcrypt.compare(password, admin.passwordHash);
-    if (!ok) {
-      return res.status(401).json({ message: "Invalid credentials" });
-    }
-
-    const token = signToken(admin);
-
-    if (process.env.SET_AUTH_COOKIE === "true") {
-      res.cookie("token", token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
-    }
-
-    return res.status(200).json({ token, admin: toSafeAdmin(admin) });
-  } catch (err) {
-    console.error("loginAdmin error", err);
+  } catch (e) {
+    console.error("adminLogin error", e);
     return res.status(500).json({ message: "Unable to login" });
   }
 };
 
-/**
- * GET /api/admin/me
- * Requires authentication & (in routes below) admin role.
+/** POST /api/admin/register
+ * Body: { name, mobile, password, email?, firmId?, address?, qualifications?[] }
+ * - Creates User (role=admin) + Admin profile (userId)
  */
-export const getMe = async (req, res) => {
+export const adminRegister = async (req, res) => {
   try {
-    const admin = await Admin.findById(req.user.id);
-    if (!admin) return res.status(404).json({ message: "Admin not found" });
-    return res.json({ admin: toSafeAdmin(admin) });
-  } catch (err) {
-    console.error("getMe error", err);
-    return res.status(500).json({ message: "Unable to fetch profile" });
+    const { name, mobile, password, email, firmId, address, qualifications } = req.body || {};
+    if (!name || !mobile || !password) return res.status(400).json({ message: "name, mobile and password are required" });
+
+    const exists = await User.findOne({ mobile });
+    if (exists) return res.status(409).json({ message: "Mobile already registered" });
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const user = await User.create({ name, mobile, email, firmId, role: "admin", passwordHash });
+    const admin = await Admin.create({ userId: user._id, name, mobile, email, address, qualifications, firmId });
+
+    const token = signToken(user);
+    const meta = roleMeta(user.name);
+    return res.status(201).json({
+      token,
+      user: toSafeUser(user),
+      profile: toSafeAdminProfile(admin),
+      ...meta,
+    });
+  } catch (e) {
+    console.error("adminRegister error", e);
+    return res.status(500).json({ message: "Unable to register admin" });
   }
 };
 
-/**
- * PATCH /api/admin/me
- */
-export const updateMe = async (req, res) => {
+/** GET /api/admin/me (optional) */
+export const adminGetMe = async (req, res) => {
   try {
-    const allowed = ["name", "mobile", "address", "qualifications", "firmId"];
-    const updates = {};
-    for (const key of allowed) if (key in req.body) updates[key] = req.body[key];
+    const user = await User.findById(req.user.id);
+    if (!user || user.role !== "admin") return res.status(403).json({ message: "Forbidden" });
+    const profile = await Admin.findOne({ userId: user._id });
+    const meta = roleMeta(user.name);
+    return res.json({ user: toSafeUser(user), profile: toSafeAdminProfile(profile), ...meta });
+  } catch (e) {
+    console.error("adminGetMe error", e);
+    return res.status(500).json({ message: "Unable to load profile" });
+  }
+};
 
-    if (req.body.password) {
-      updates.passwordHash = await bcrypt.hash(req.body.password, 12);
-    }
+/** PATCH /api/admin/me */
+export const adminUpdateMe = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user || user.role !== "admin") return res.status(403).json({ message: "Forbidden" });
 
-    const admin = await Admin.findByIdAndUpdate(req.user.id, updates, {
-      new: true,
-    });
-    if (!admin) return res.status(404).json({ message: "Admin not found" });
-    return res.json({ admin: toSafeAdmin(admin) });
-  } catch (err) {
-    console.error("updateMe error", err);
+    // Update allowed user fields
+    const uAllowed = ["name", "email", "mobile", "firmId"];
+    const uSet = {};
+    for (const k of uAllowed) if (k in req.body) uSet[k] = req.body[k];
+    if (req.body.password) uSet.passwordHash = await bcrypt.hash(req.body.password, 12);
+
+    if (Object.keys(uSet).length) await User.findByIdAndUpdate(user._id, uSet, { new: false });
+
+    // Update admin profile fields
+    const aAllowed = ["name", "email", "mobile", "address", "qualifications", "firmId"];
+    const aSet = {};
+    for (const k of aAllowed) if (k in req.body) aSet[k] = req.body[k];
+    const profile = await Admin.findOneAndUpdate(
+      { userId: user._id },
+      { $set: aSet },
+      { new: true, upsert: true }
+    );
+
+    const freshUser = await User.findById(user._id);
+    const meta = roleMeta(freshUser.name);
+    return res.json({ user: toSafeUser(freshUser), profile: toSafeAdminProfile(profile), ...meta });
+  } catch (e) {
+    console.error("adminUpdateMe error", e);
     return res.status(500).json({ message: "Unable to update profile" });
   }
 };
 
-/**
- * GET /api/admin/dashboard
- * Placeholder stats; replace with real metrics later.
- */
-export const getDashboard = async (_req, res) => {
+/** GET /api/admin/dashboard */
+export const adminDashboard = async (_req, res) => {
   try {
-    const totalAdmins = await Admin.countDocuments();
+    // Stub numbers (replace with real aggregates when ready)
     return res.json({
-      stats: {
-        totalAdmins,
-        serverTime: new Date().toISOString(),
-      },
+      cards: {
+        totalAdmins: await Admin.countDocuments(),
+        // Add more KPIs when entities exist, e.g. matters, clients, invoices...
+      }
     });
-  } catch (err) {
-    console.error("getDashboard error", err);
-    return res.status(500).json({ message: "Unable to fetch dashboard" });
+  } catch (e) {
+    console.error("adminDashboard error", e);
+    return res.status(500).json({ message: "Unable to load dashboard" });
+  }
+};
+
+/** ---------- CRUD over Admin profiles (managed by admins) ---------- */
+
+/** POST /api/admin */
+export const createAdmin = async (req, res) => {
+  try {
+    const { name, mobile, password, email, firmId, address, qualifications } = req.body || {};
+    if (!name || !mobile || !password) return res.status(400).json({ message: "name, mobile and password are required" });
+
+    const exists = await User.findOne({ mobile });
+    if (exists) return res.status(409).json({ message: "Mobile already registered" });
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const user = await User.create({ name, mobile, email, firmId, role: "admin", passwordHash });
+    const admin = await Admin.create({ userId: user._id, name, mobile, email, address, qualifications, firmId });
+
+    return res.status(201).json({ admin: toSafeAdminProfile(admin), user: toSafeUser(user) });
+  } catch (e) {
+    console.error("createAdmin error", e);
+    return res.status(500).json({ message: "Unable to create admin" });
+  }
+};
+
+/** GET /api/admin */
+export const listAdmins = async (_req, res) => {
+  try {
+    const admins = await Admin.find().sort({ createdAt: -1 });
+    return res.json({ admins: admins.map(toSafeAdminProfile) });
+  } catch (e) {
+    console.error("listAdmins error", e);
+    return res.status(500).json({ message: "Unable to list admins" });
+  }
+};
+
+/** GET /api/admin/:id */
+export const getAdmin = async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) return res.status(404).json({ message: "Admin not found" });
+    return res.json({ admin: toSafeAdminProfile(admin) });
+  } catch (e) {
+    console.error("getAdmin error", e);
+    return res.status(500).json({ message: "Unable to fetch admin" });
+  }
+};
+
+/** PATCH /api/admin/:id */
+export const updateAdmin = async (req, res) => {
+  try {
+    const allowed = ["name", "email", "mobile", "address", "qualifications", "firmId"];
+    const updates = {};
+    for (const k of allowed) if (k in req.body) updates[k] = req.body[k];
+
+    const admin = await Admin.findByIdAndUpdate(req.params.id, updates, { new: true });
+    if (!admin) return res.status(404).json({ message: "Admin not found" });
+
+    // Keep User fields (name/mobile/email/firmId) in sync if those changed
+    const sync = {};
+    ["name", "email", "mobile", "firmId"].forEach(k => { if (k in updates) sync[k] = updates[k]; });
+    if (Object.keys(sync).length) await User.findByIdAndUpdate(admin.userId, sync);
+
+    if ("password" in req.body && req.body.password) {
+      await User.findByIdAndUpdate(admin.userId, { passwordHash: await bcrypt.hash(req.body.password, 12) });
+    }
+
+    return res.json({ admin: toSafeAdminProfile(admin) });
+  } catch (e) {
+    console.error("updateAdmin error", e);
+    return res.status(500).json({ message: "Unable to update admin" });
+  }
+};
+
+/** DELETE /api/admin/:id */
+export const deleteAdmin = async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) return res.status(404).json({ message: "Admin not found" });
+
+    await Admin.deleteOne({ _id: admin._id });
+    // Also remove the underlying User (admin identity)
+    await User.deleteOne({ _id: admin.userId });
+
+    return res.status(204).send();
+  } catch (e) {
+    console.error("deleteAdmin error", e);
+    return res.status(500).json({ message: "Unable to delete admin" });
   }
 };

@@ -1,23 +1,36 @@
-import express from 'express';
+// src/routes/clientRoutes.js
+import { Router } from 'express';
 import {
   getAllClients,
-  getClientDashboard,
+  getClientById,
   createClient,
   updateClient,
-  deleteClient
+  deleteClient,
+  assignOwner,
+  listClientCases,
+  listClientInvoices,
+  listClientPayments,
+  clientSummary,
 } from '../controllers/clientController.js';
 
-const router = express.Router();
+const router = Router();
 
-// Create + Read
-router.get('/', getAllClients);
-router.post('/create', createClient);
+// CRUD
+router.get('/clients', getAllClients);
+router.get('/clients/:clientId', getClientById);
+router.post('/clients', createClient);
+router.put('/clients/:clientId', updateClient);
+router.delete('/clients/:clientId', deleteClient);
 
-// Dashboard View
-router.get('/:clientId/dashboard', getClientDashboard);
+// Owner mapping + payment terms
+router.patch('/clients/:clientId/assign-owner', assignOwner);
 
-// Update + Delete (custom path names)
-router.put('/:clientId/update', updateClient);
-router.delete('/:clientId/delete', deleteClient);
+// Related lists
+router.get('/clients/:clientId/cases', listClientCases);
+router.get('/clients/:clientId/invoices', listClientInvoices);
+router.get('/clients/:clientId/payments', listClientPayments);
+
+// Financial summary
+router.get('/clients/:clientId/summary', clientSummary);
 
 export default router;

@@ -1,3 +1,5 @@
+// src/models/AssociateProfile.js
+
 import mongoose from 'mongoose';
 
 const AssociateProfileSchema = new mongoose.Schema({

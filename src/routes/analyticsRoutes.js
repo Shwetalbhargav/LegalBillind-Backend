@@ -1,3 +1,5 @@
+// src/routes/analyticsRoutes.js
+
 import express from 'express';
 import {
   getBillableStats,

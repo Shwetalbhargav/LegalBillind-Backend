@@ -1,21 +1,21 @@
-// routes/invoiceRoutes.js
-import express from 'express';
+// src/routes/invoiceRoutes.js
+import { Router } from 'express';
 import {
-  createInvoice,
-  getInvoiceById,
   getAllInvoices,
-  getInvoicesByUser,
-  addPayment,
-  getPendingSummaryByClient
+  getInvoiceById,
+  generateFromApprovedTime,
+  sendInvoice,
+  voidInvoice,
+  getPipeline,
 } from '../controllers/invoiceController.js';
 
-const router = express.Router();
+const router = Router();
 
-router.post('/', createInvoice);
 router.get('/', getAllInvoices);
-router.get('/__analytics/pending-by-client', getPendingSummaryByClient);
-router.post('/:id/payments', addPayment);
-router.get('/user/:userId', getInvoicesByUser);
+router.get('/__pipeline', getPipeline);
 router.get('/:id', getInvoiceById);
+router.post('/from-time', generateFromApprovedTime);
+router.post('/:id/send', sendInvoice);
+router.post('/:id/void', voidInvoice);
 
 export default router;

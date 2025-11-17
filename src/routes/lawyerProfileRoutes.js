@@ -1,3 +1,5 @@
+// src/routes/lawyerProfileRoutes.js
+
 import express from "express";
 import {
   createLawyerProfile,
