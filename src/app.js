@@ -113,8 +113,8 @@ dualMount('time-entries',     timeEntryRoutes);
 dualMount('users',            userRoutes);
 
 // Auth & Admin (both)
-dualMount('auth',             authRoutes);   // '/auth/...', '/api/auth/...'
-dualMount('admin',            adminRoutes);  // '/admin/...', '/api/admin/...'
+dualMount('auth',             authRoutes);   
+dualMount('admin',            adminRoutes); 
 
 // AI helpers (both)
 dualMount('ai',               aiRoutes);
