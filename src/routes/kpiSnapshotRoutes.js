@@ -4,6 +4,7 @@ import {
   generateSnapshots,
   listSnapshots,
   getSnapshotById,
+  computeAndUpsert
 } from '../controllers/kpiSnapshotController.js';
 
 const router = Router();
@@ -17,5 +18,6 @@ const router = Router();
 router.post('/generate', generateSnapshots);
 router.get('/', listSnapshots);
 router.get('/:id', getSnapshotById);
+router.post('/compute-upsert', computeAndUpsert);
 
 export default router;

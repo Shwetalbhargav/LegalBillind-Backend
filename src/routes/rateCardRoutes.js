@@ -10,14 +10,7 @@ import {
 
 const router = Router();
 
-/**
- * Examples:
- *  GET    /api/rate-cards?userId=<uid>&activeOn=2025-09-01
- *  POST   /api/rate-cards
- *  PUT    /api/rate-cards/:id
- *  DELETE /api/rate-cards/:id
- *  GET    /api/rate-cards/resolve?userId=<uid>&caseId=<cid>&activityCode=DRAFT&at=2025-09-15
- */
+
 router.get('/', listRateCards);
 router.post('/', createRateCard);
 router.put('/:id', updateRateCard);

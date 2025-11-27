@@ -38,6 +38,10 @@ import reportsRoutes from './routes/reportsRoutes.js';
 import revenueRoutes from './routes/revenueRoutes.js';
 import timeEntryRoutes from './routes/timeEntryRoutes.js';
 import userRoutes from './routes/userRoutes.js';
+import kpiRoutes from './routes/kpiRoutes.js';
+
+
+
 
 const app = express();
 
@@ -83,15 +87,15 @@ app.use(cookieParser());
 
 // Routers with absolute paths inside -> mount at '/' AND '/api'
 for (const base of ['/', '/api']) {
-  app.use(base, activityRoutes);           // '/activities'
-  app.use(base, analyticsRoutes);          // '/billables', '/invoices', '/unbilled', ...
-  app.use(base, arRoutes);                 // '/ar/...'
-  app.use(base, caseAssignmentRoutes);     // '/case-assignments'
-  app.use(base, caseRoutes);               // '/cases'
-  app.use(base, clientRoutes);             // '/clients'
-  app.use(base, emailEntryRoutes);         // '/email-entries'
-  app.use(base, firmRoutes);               // '/firms'
-  app.use(base, integrationLogRoutes);     // '/integration-logs'
+  app.use(base, activityRoutes);          
+  app.use(base, analyticsRoutes);         
+  app.use(base, arRoutes);               
+  app.use(base, caseAssignmentRoutes);     
+  app.use(base, caseRoutes);               
+  app.use(base, clientRoutes);             
+  app.use(base, emailEntryRoutes);         
+  app.use(base, firmRoutes);               
+  app.use(base, integrationLogRoutes);   
 }
 
 // Resource-relative routers -> mount at '/<resource>' AND '/api/<resource>'
@@ -105,6 +109,7 @@ dualMount('invoices',         invoiceRoutes);
 app.use('/invoices/:invoiceId/lines', invoiceLineRoutes);
 app.use('/api/invoices/:invoiceId/lines', invoiceLineRoutes); // keep both for nested
 dualMount('kpi-snapshots',    kpiSnapshotRoutes);
+dualMount('kpi',              kpiRoutes)
 dualMount('payments',         paymentRoutes);
 dualMount('rate-cards',       rateCardRoutes);
 dualMount('reports',          reportsRoutes);

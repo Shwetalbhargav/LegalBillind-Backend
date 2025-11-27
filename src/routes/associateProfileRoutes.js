@@ -5,18 +5,110 @@ import {
   listAssociateProfiles,
   getAssociateProfile,
   updateAssociateProfile,
-  deleteAssociateProfile
+  deleteAssociateProfile,
+  getAssociateProfileByUser,
+  getMyAssociateProfile,
+  updateMyAssociateProfile,
+  deleteMyAssociateProfile,
+  associateDashboard,
 } from "../controllers/associateProfileController.js";
 import { authenticate, authorize } from "../middleware/auth.js";
 
 const router = express.Router();
 
-router.post("/", authenticate, authorize("admin", "partner"), createAssociateProfile);
-router.get("/", authenticate, authorize("admin", "partner"), listAssociateProfiles);
+/**
+ * ADMIN / SYSTEM CRUD
+ *
+ * POST    /api/associate-profiles
+ * GET     /api/associate-profiles
+ * GET     /api/associate-profiles/by-id?id=
+ * PATCH   /api/associate-profiles
+ * DELETE  /api/associate-profiles
+ * GET     /api/associate-profiles/by-user?userId=
+ */
 
-// No path params — use query/body instead
-router.get("/view", authenticate, authorize("admin", "partner"), getAssociateProfile);   // ?id=
-router.put("/update", authenticate, authorize("admin", "partner"), updateAssociateProfile); // body.id
-router.post("/remove", authenticate, authorize("admin", "partner"), deleteAssociateProfile); // body.id
+router.post(
+  "/",
+  authenticate,
+  authorize("admin", "partner"),
+  createAssociateProfile
+);
+
+router.get(
+  "/",
+  authenticate,
+  authorize("admin", "partner"),
+  listAssociateProfiles
+);
+
+router.get(
+  "/by-id",
+  authenticate,
+  authorize("admin", "partner"),
+  getAssociateProfile
+);
+
+router.patch(
+  "/",
+  authenticate,
+  authorize("admin", "partner"),
+  updateAssociateProfile
+);
+
+router.delete(
+  "/",
+  authenticate,
+  authorize("admin", "partner"),
+  deleteAssociateProfile
+);
+
+router.get(
+  "/by-user",
+  authenticate,
+  authorize("admin", "partner"),
+  getAssociateProfileByUser
+);
+
+/**
+ * SELF APIs (for logged-in associate)
+ *
+ * GET    /api/associate-profiles/me
+ * PATCH  /api/associate-profiles/me
+ * DELETE /api/associate-profiles/me
+ */
+
+router.get(
+  "/me",
+  authenticate,
+  authorize("associate"),
+  getMyAssociateProfile
+);
+
+router.patch(
+  "/me",
+  authenticate,
+  authorize("associate"),
+  updateMyAssociateProfile
+);
+
+router.delete(
+  "/me",
+  authenticate,
+  authorize("associate"),
+  deleteMyAssociateProfile
+);
+
+/**
+ * DASHBOARD
+ *
+ * GET /api/associate-profiles/dashboard
+ */
+
+router.get(
+  "/dashboard",
+  authenticate,
+  authorize("admin", "partner"),
+  associateDashboard
+);
 
 export default router;

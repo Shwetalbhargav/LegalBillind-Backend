@@ -10,7 +10,8 @@ import {
   getPartnerProfileByUser,      // admin, via ?userId=
   getPartnerProfileById,        // admin, via ?id=
   updatePartnerProfileById,     // admin, via body { id, ...updates }
-  deletePartnerProfileById      // admin, via body { id }
+  deletePartnerProfileById,    // admin, via body { id }
+  partnerDashboard 
 } from "../controllers/partnerProfileController.js";
 import { authenticate, authorize } from "../middleware/auth.js";
 
@@ -29,5 +30,6 @@ router.get("/by-user", authenticate, authorize("admin"), getPartnerProfileByUser
 router.get("/by-id", authenticate, authorize("admin"), getPartnerProfileById);     // ?id=
 router.put("/update", authenticate, authorize("admin"), updatePartnerProfileById); // body.id
 router.post("/remove", authenticate, authorize("admin"), deletePartnerProfileById); // body.id
+router.get("/dashboard", authenticate, authorize("admin", "partner"), partnerDashboard);
 
 export default router;

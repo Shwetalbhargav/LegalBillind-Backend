@@ -1,4 +1,4 @@
-//src/controllers/partnerProfileController.js
+// src/controllers/partnerProfileController.js
 
 import mongoose from "mongoose";
 import PartnerProfile from "../models/PartnerProfile.js";
@@ -6,6 +6,9 @@ import User from "../models/User.js";
 
 const isValidId = (id) => mongoose.isValidObjectId(id);
 
+/**
+ * POST /api/partner-profiles
+ */
 export const createPartnerProfile = async (req, res) => {
   try {
     const {
@@ -183,5 +186,24 @@ export const deletePartnerProfileById = async (req, res) => {
   } catch (err) {
     console.error("deletePartnerProfileById error:", err);
     res.status(500).json({ error: "Server error" });
+  }
+};
+
+/**
+ * DASHBOARD
+ * GET /api/partner-profiles/dashboard
+ */
+export const partnerDashboard = async (_req, res) => {
+  try {
+    const totalPartners = await PartnerProfile.countDocuments();
+    res.json({
+      success: true,
+      cards: {
+        totalPartners,
+      },
+    });
+  } catch (err) {
+    console.error("partnerDashboard error:", err);
+    res.status(500).json({ error: "Unable to load partner dashboard" });
   }
 };

@@ -13,16 +13,39 @@ function monthRange(yyyyMM) {
 }
 
 /**
- * Compute KPIs for a given scope/scopeId and month, then upsert snapshot.
+ * Internal helper: compute KPIs and upsert snapshot.
+ * NOT an Express handler.
  */
-async function computeAndUpsert(scope, scopeId, month) {
+async function computeAndUpsertCore(scope, scopeId, month) {
   const { start, end } = monthRange(month);
 
   // Utilization
   const utilAgg = await TimeEntry.aggregate([
-    { $match: { date: { $gte: start, $lt: end }, ...(scopeId ? { [`${scope}Id`]: new mongoose.Types.ObjectId(scopeId) } : {}) } },
-    { $group: { _id: null, b: { $sum: { $ifNull: ['$billableMinutes', 0] } }, n: { $sum: { $ifNull: ['$nonbillableMinutes', 0] } } } },
-    { $project: { _id: 0, util: { $cond: [{ $gt: [{ $add: ['$b', '$n'] }, 0] }, { $divide: ['$b', { $add: ['$b', '$n'] }] }, 0] } } },
+    {
+      $match: {
+        date: { $gte: start, $lt: end },
+        ...(scopeId ? { [`${scope}Id`]: new mongoose.Types.ObjectId(scopeId) } : {}),
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        b: { $sum: { $ifNull: ['$billableMinutes', 0] } },
+        n: { $sum: { $ifNull: ['$nonbillableMinutes', 0] } },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        util: {
+          $cond: [
+            { $gt: [{ $add: ['$b', '$n'] }, 0] },
+            { $divide: ['$b', { $add: ['$b', '$n'] }] },
+            0,
+          ],
+        },
+      },
+    },
   ]);
   const utilization = utilAgg[0]?.util || 0;
 
@@ -45,7 +68,14 @@ async function computeAndUpsert(scope, scopeId, month) {
     const a = await Invoice.aggregate([
       { $match: { issueDate: { $gte: start, $lt: end }, status: { $ne: 'void' } } },
       { $unwind: '$items' },
-      { $lookup: { from: 'timeentries', localField: 'items.billableId', foreignField: '_id', as: 'te' } },
+      {
+        $lookup: {
+          from: 'timeentries',
+          localField: 'items.billableId',
+          foreignField: '_id',
+          as: 'te',
+        },
+      },
       { $unwind: '$te' },
       { $match: { 'te.userId': new mongoose.Types.ObjectId(scopeId) } },
       { $group: { _id: '$_id', amt: { $sum: { $ifNull: ['$items.amount', 0] } } } },
@@ -54,8 +84,13 @@ async function computeAndUpsert(scope, scopeId, month) {
     invoiced = a[0]?.total || 0;
   } else {
     const m = { issueDate: { $gte: start, $lt: end }, status: { $ne: 'void' } };
-    if (scopeId && (scope === 'client' || scope === 'case')) m[`${scope}Id`] = new mongoose.Types.ObjectId(scopeId);
-    const a = await Invoice.aggregate([{ $match: m }, { $group: { _id: null, total: { $sum: { $ifNull: ['$total', 0] } } } }]);
+    if (scopeId && (scope === 'client' || scope === 'case')) {
+      m[`${scope}Id`] = new mongoose.Types.ObjectId(scopeId);
+    }
+    const a = await Invoice.aggregate([
+      { $match: m },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$total', 0] } } } },
+    ]);
     invoiced = a[0]?.total || 0;
   }
 
@@ -68,11 +103,18 @@ async function computeAndUpsert(scope, scopeId, month) {
     ]);
     revenue = p[0]?.total || 0;
   } else if (scope === 'client' || scope === 'case') {
-    const matchInvoice = { };
+    const matchInvoice = {};
     matchInvoice[`${scope}Id`] = new mongoose.Types.ObjectId(scopeId);
     const p = await Payment.aggregate([
       { $match: { status: 'cleared', receivedDate: { $gte: start, $lt: end } } },
-      { $lookup: { from: 'invoices', localField: 'invoiceId', foreignField: '_id', as: 'inv' } },
+      {
+        $lookup: {
+          from: 'invoices',
+          localField: 'invoiceId',
+          foreignField: '_id',
+          as: 'inv',
+        },
+      },
       { $unwind: '$inv' },
       { $match: matchInvoice },
       { $group: { _id: null, total: { $sum: '$amount' } } },
@@ -82,10 +124,24 @@ async function computeAndUpsert(scope, scopeId, month) {
     const userId = new mongoose.Types.ObjectId(scopeId);
     const p = await Payment.aggregate([
       { $match: { status: 'cleared', receivedDate: { $gte: start, $lt: end } } },
-      { $lookup: { from: 'invoices', localField: 'invoiceId', foreignField: '_id', as: 'inv' } },
+      {
+        $lookup: {
+          from: 'invoices',
+          localField: 'invoiceId',
+          foreignField: '_id',
+          as: 'inv',
+        },
+      },
       { $unwind: '$inv' },
       { $unwind: '$inv.items' },
-      { $lookup: { from: 'timeentries', localField: 'inv.items.billableId', foreignField: '_id', as: 'te' } },
+      {
+        $lookup: {
+          from: 'timeentries',
+          localField: 'inv.items.billableId',
+          foreignField: '_id',
+          as: 'te',
+        },
+      },
       { $unwind: '$te' },
       {
         $group: {
@@ -135,7 +191,14 @@ async function computeAndUpsert(scope, scopeId, month) {
     const a = await Invoice.aggregate([
       { $match: { issueDate: { $lt: end }, status: { $ne: 'void' } } },
       { $unwind: '$items' },
-      { $lookup: { from: 'timeentries', localField: 'items.billableId', foreignField: '_id', as: 'te' } },
+      {
+        $lookup: {
+          from: 'timeentries',
+          localField: 'items.billableId',
+          foreignField: '_id',
+          as: 'te',
+        },
+      },
       { $unwind: '$te' },
       { $match: { 'te.userId': new mongoose.Types.ObjectId(scopeId) } },
       { $group: { _id: '$_id', amt: { $sum: { $ifNull: ['$items.amount', 0] } } } },
@@ -144,21 +207,36 @@ async function computeAndUpsert(scope, scopeId, month) {
     invSum = a[0]?.total || 0;
   } else {
     const m = { issueDate: { $lt: end }, status: { $ne: 'void' } };
-    if (scopeId && (scope === 'client' || scope === 'case')) m[`${scope}Id`] = new mongoose.Types.ObjectId(scopeId);
-    const a = await Invoice.aggregate([{ $match: m }, { $group: { _id: null, total: { $sum: { $ifNull: ['$total', 0] } } } }]);
+    if (scopeId && (scope === 'client' || scope === 'case')) {
+      m[`${scope}Id`] = new mongoose.Types.ObjectId(scopeId);
+    }
+    const a = await Invoice.aggregate([
+      { $match: m },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$total', 0] } } } },
+    ]);
     invSum = a[0]?.total || 0;
   }
 
   let paySum = 0;
   if (scope === 'firm' || !scopeId) {
-    const p = await Payment.aggregate([{ $match: { status: 'cleared', receivedDate: { $lt: end } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]);
+    const p = await Payment.aggregate([
+      { $match: { status: 'cleared', receivedDate: { $lt: end } } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]);
     paySum = p[0]?.total || 0;
   } else if (scope === 'client' || scope === 'case') {
     const m = {};
     m[`${scope}Id`] = new mongoose.Types.ObjectId(scopeId);
     const p = await Payment.aggregate([
       { $match: { status: 'cleared', receivedDate: { $lt: end } } },
-      { $lookup: { from: 'invoices', localField: 'invoiceId', foreignField: '_id', as: 'inv' } },
+      {
+        $lookup: {
+          from: 'invoices',
+          localField: 'invoiceId',
+          foreignField: '_id',
+          as: 'inv',
+        },
+      },
       { $unwind: '$inv' },
       { $match: m },
       { $group: { _id: null, total: { $sum: '$amount' } } },
@@ -168,10 +246,24 @@ async function computeAndUpsert(scope, scopeId, month) {
     const userId = new mongoose.Types.ObjectId(scopeId);
     const p = await Payment.aggregate([
       { $match: { status: 'cleared', receivedDate: { $lt: end } } },
-      { $lookup: { from: 'invoices', localField: 'invoiceId', foreignField: '_id', as: 'inv' } },
+      {
+        $lookup: {
+          from: 'invoices',
+          localField: 'invoiceId',
+          foreignField: '_id',
+          as: 'inv',
+        },
+      },
       { $unwind: '$inv' },
       { $unwind: '$inv.items' },
-      { $lookup: { from: 'timeentries', localField: 'inv.items.billableId', foreignField: '_id', as: 'te' } },
+      {
+        $lookup: {
+          from: 'timeentries',
+          localField: 'inv.items.billableId',
+          foreignField: '_id',
+          as: 'te',
+        },
+      },
       { $unwind: '$te' },
       {
         $group: {
@@ -228,39 +320,58 @@ async function computeAndUpsert(scope, scopeId, month) {
 }
 
 /**
+ * POST /api/kpi-snapshots/compute-upsert
+ * Body: { scope: "firm" | "user" | "client" | "case", scopeId?: string, month?: "YYYY-MM" }
+ */
+export const computeAndUpsert = async (req, res) => {
+  try {
+    const { scope, scopeId, month } = req.body || {};
+    if (!scope) {
+      return res.status(400).json({ error: 'scope is required' });
+    }
+    const m = month || new Date().toISOString().slice(0, 7); // default current month
+    const result = await computeAndUpsertCore(scope, scopeId || null, m);
+    res.json(result);
+  } catch (err) {
+    console.error('computeAndUpsert error:', err);
+    res.status(500).json({ error: 'Failed to compute and upsert KPI snapshot' });
+  }
+};
+
+/**
  * POST /api/kpi-snapshots/generate
- * Body: { month: "YYYY-MM", scopes?: ["firm","user","client","case"], scopeIds?: string[] }:
- *  - If month omitted, uses current month.
- *  - If scopes omitted, defaults to ["firm"].
- *  - If scopeIds provided for non-firm, generates for each id.
+ * Body: { month: "YYYY-MM", scopes?: ["firm","user","client","case"], scopeIds?: string[] }
  */
 export const generateSnapshots = async (req, res) => {
   try {
-    const month = req.body.month ||
-      new Date().toISOString().slice(0, 7); // YYYY-MM
-    const scopes = Array.isArray(req.body.scopes) && req.body.scopes.length ? req.body.scopes : ['firm'];
+    const month = req.body.month || new Date().toISOString().slice(0, 7); // YYYY-MM
+    const scopes =
+      Array.isArray(req.body.scopes) && req.body.scopes.length
+        ? req.body.scopes
+        : ['firm'];
     const scopeIds = Array.isArray(req.body.scopeIds) ? req.body.scopeIds : [];
 
     const results = [];
     for (const s of scopes) {
       if (s === 'firm') {
-        results.push(await computeAndUpsert('firm', null, month));
+        results.push(await computeAndUpsertCore('firm', null, month));
       } else if (scopeIds.length) {
         for (const id of scopeIds) {
-          results.push(await computeAndUpsert(s, id, month));
+          results.push(await computeAndUpsertCore(s, id, month));
         }
       } else {
         // Auto-discover distinct IDs from data within the month range
         const { start, end } = monthRange(month);
-        const model = s === 'user' ? TimeEntry : (s === 'client' ? Invoice : Invoice);
-        const distinctField = s === 'user' ? 'userId' : (s === 'client' ? 'clientId' : 'caseId');
-        const baseMatch = s === 'user'
-          ? { date: { $gte: start, $lt: end } }
-          : { issueDate: { $lt: end }, status: { $ne: 'void' } };
+        const model = s === 'user' ? TimeEntry : Invoice;
+        const distinctField = s === 'user' ? 'userId' : s === 'client' ? 'clientId' : 'caseId';
+        const baseMatch =
+          s === 'user'
+            ? { date: { $gte: start, $lt: end } }
+            : { issueDate: { $lt: end }, status: { $ne: 'void' } };
 
         const ids = await model.distinct(distinctField, baseMatch);
         for (const id of ids) {
-          results.push(await computeAndUpsert(s, id, month));
+          results.push(await computeAndUpsertCore(s, id, month));
         }
       }
     }

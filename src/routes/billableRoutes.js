@@ -7,6 +7,7 @@ import {
   getBillableById,
   updateBillable,
   deleteBillable,
+  createFromEmail
   } from '../controllers/billableController.js';
 
 const router = express.Router();
@@ -16,4 +17,5 @@ router.get('/', getAllBillables);
 router.get('/:id', getBillableById);
 router.put('/:id', updateBillable);
 router.delete('/:id', deleteBillable);
+router.post('/from-email/:emailEntryId', createFromEmail);
 export default router;
