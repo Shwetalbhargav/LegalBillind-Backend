@@ -229,3 +229,70 @@ export const getPipeline = async (req, res) => {
     res.status(500).json({ error: 'Failed to build pipeline' });
   }
 };
+
+// GET /api/invoices/__analytics/pending-by-client
+// Summarize total pending amount per client.
+// "Pending" = invoices that are NOT paid or void.
+export const getPendingSummaryByClient = async (req, res) => {
+  try {
+    const { clientId } = req.query;
+
+    const match = {
+      status: { $nin: ["paid", "void"] }, // treat all other statuses as pending
+    };
+
+    if (clientId) {
+      match.clientId = new mongoose.Types.ObjectId(clientId);
+    }
+
+    const pipeline = [
+      { $match: match },
+      {
+        $group: {
+          _id: "$clientId",
+          // support either total or totalAmount fields
+          totalPending: {
+            $sum: {
+              $ifNull: ["$total", "$totalAmount"],
+            },
+          },
+          invoiceCount: { $sum: 1 },
+        },
+      },
+      {
+        $lookup: {
+          from: "clients",
+          localField: "_id",
+          foreignField: "_id",
+          as: "client",
+        },
+      },
+      { $unwind: { path: "$client", preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          clientId: "$_id",
+          clientName: {
+            $ifNull: [
+              "$client.displayName",
+              {
+                $ifNull: ["$client.name", "Unknown client"],
+              },
+            ],
+          },
+          totalPending: 1,
+          invoiceCount: 1,
+        },
+      },
+      { $sort: { totalPending: -1 } },
+    ];
+
+    const rows = await Invoice.aggregate(pipeline);
+    // Frontend handles both {items: []} and [] so this is safe:
+    res.json({ items: rows });
+  } catch (error) {
+    console.error("getPendingSummaryByClient error", error);
+    res
+      .status(500)
+      .json({ error: "Failed to compute pending summary by client" });
+  }
+};

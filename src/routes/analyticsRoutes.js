@@ -14,10 +14,10 @@ import {
 
 const router = express.Router();
 
-router.get('/billables', getBillableStats);
-router.get('/invoices', getInvoiceStats);
-router.get('/unbilled', getUnbilledBillables);
-router.get('/billables-by-case-type', getBillableStatsByCaseType);
+router.get('/analytics/billables', getBillableStats);
+router.get('/analytics/invoices', getInvoiceStats);
+router.get('/analytics/unbilled', getUnbilledBillables);
+router.get('/analytics/billables-by-case-type', getBillableStatsByCaseType);
 router.get('/analytics/unbilled-by-client', getUnbilledStatsByClient);
 router.get('/analytics/unbilled-by-user', getUnbilledStatsByUser);
 router.get('/analytics/billed-by-client', getBilledStatsByClient);

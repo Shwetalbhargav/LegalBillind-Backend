@@ -6,8 +6,7 @@ import User from "../models/User.js";
 
 // LOGIN —  uses name + mobile + password + role
 export const loginUser = async (req, res) => {
-  const hash = await bcrypt.hash("changeme", 10);
-  console.log(hash);
+  
   const { name, mobile, password, role } = req.body;
   try {
     if (!name || !mobile || !password || !role) {
