@@ -52,7 +52,7 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
 // DB
 connectDB();
 
-import cors from 'cors';
+
 
 
 app.use(
