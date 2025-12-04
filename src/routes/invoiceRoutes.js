@@ -13,11 +13,11 @@ import {
 const router = Router();
 
 router.get('/', getAllInvoices);
-router.get('/__pipeline', getPipeline);
 router.get('/:id', getInvoiceById);
 router.post('/from-time', generateFromApprovedTime);
 router.post('/:id/send', sendInvoice);
 router.post('/:id/void', voidInvoice);
-router.get('/pending-summary/by-client', getPendingSummaryByClient);
+router.get('/__analytics/pending-by-client', getPendingSummaryByClient);
+router.get('/__pipeline', getPipeline);
 
 export default router;

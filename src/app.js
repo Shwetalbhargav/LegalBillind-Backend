@@ -52,24 +52,16 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
 // DB
 connectDB();
 
-// CORS (allow prod preview & localhost)
-const allowlist = new Set([
-  'chrome-extension://loicakonhdggeejichcfpgagooapmdek',
-  'https://mail.google.com',
-  'http://localhost:5173',
-  'http://localhost:5000',
-  process.env.FRONTEND_URL,
-]);
+import cors from 'cors';
 
-app.use(cors({
-  origin(origin, cb) {
-    if (!origin) return cb(null, true);
-    if (allowlist.has(origin)) return cb(null, true);
-    if (/\.vercel\.app$/.test(origin)) return cb(null, true);
-    return cb(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-}));
+
+app.use(
+  cors({
+    origin: true,        
+    credentials: true,   
+  })
+);
+
 
 // Parsers
 app.use(express.json());
