@@ -22,6 +22,15 @@ const CaseSchema = new mongoose.Schema(
 
     case_type: { type: String, trim: true },
     case_type_id: { type: mongoose.Schema.Types.ObjectId, index: true },
+    integrations: {
+      zoho: {
+        crmModule: { type: String, default: 'Deals' },
+        crmRecordId: { type: String },
+        workdriveFolderId: { type: String },
+        workdriveFolderUrl: { type: String },
+        lastSyncedAt: { type: Date },
+      },
+    },
   },
   { timestamps: true }
 );

@@ -1,8 +1,6 @@
 // routes/aiRoutes.js
 import express from 'express';
 import { generateBillableSummary } from '../services/gptService.js';
-import { mapRecipientToMatter } from '../services/matterMapService.js';
-import { pushTimeEntryToClio } from '../services/clioService.js';
 
 const router = express.Router();
 
@@ -41,22 +39,21 @@ router.post('/generate-email', async (req, res) => {
 
 /**
  * POST /api/ai/email-to-billable
- * Turns an outbound email into a Clio time entry.
+ * Turns an outbound email into a local billable preview.
  *
  * Body:
  * {
- *   userId: string,              // required (must have Clio tokens on file)
+ *   userId: string,              // required
  *   to: string,                  // required (recipient email for matter mapping)
  *   subject?: string,
  *   body?: string,
  *   minutes?: number,            // default 6 (0.1h)
  *   date?: string,               // YYYY-MM-DD (defaults today)
- *   dryRun?: boolean             // if true, returns what would be sent without Clio POST
+ *   dryRun?: boolean             // kept for compatibility
  * }
  *
  * Resp:
- *   dryRun: { success, planned: {...} }
- *   live:   { success, clio: {...raw Clio API response...} }
+ *   { success, planned: {...} }
  */
 router.post('/email-to-billable', async (req, res) => {
   try {
@@ -77,48 +74,19 @@ router.post('/email-to-billable', async (req, res) => {
     }
     const qtyHours = Math.max(Number(minutes ?? 6) / 60, 0.1);
 
-    // --- Build AI summary for the description
-    // (Your current gptService returns a concise one-liner)
     const description = await generateBillableSummary({ subject, body });
-
-    // --- Map recipient -> Clio Matter
-    const matterId = await mapRecipientToMatter(to, userId);
-    if (!matterId) {
-      // clioService also tries tokenDoc.defaultMatterId and env fallback,
-      // but we surface a clear error here if mapping failed & no fallback.
-      return res.status(422).json({
-        success: false,
-        message: `No Clio Matter ID found for recipient "${to}". Configure mapping or set CLIO_MATTER_ID.`
-      });
-    }
-
-    // --- Dry run path
-    if (dryRun) {
-      return res.json({
-        success: true,
-        planned: {
-          clioActivity: {
-            matterId,
-            quantity: qtyHours,
-            description,
-            date: date || new Date().toISOString().split('T')[0]
-          }
-        }
-      });
-    }
-
-    // --- Live push to Clio
-    const clioResp = await pushTimeEntryToClio({
-      userId,
-      matterId,
-      quantity: qtyHours,
-      description,
-      date
+    return res.json({
+      success: true,
+      planned: {
+        recipient: to,
+        userId,
+        quantityHours: qtyHours,
+        description,
+        date: date || new Date().toISOString().split('T')[0],
+        dryRun: Boolean(dryRun),
+      },
     });
-
-    return res.json({ success: true, clio: clioResp });
   } catch (err) {
-    // Normalize common Clio errors into readable messages
     const msg = (err?.response?.data && JSON.stringify(err.response.data)) || err.message || 'Unknown error';
     console.error('[AI] email-to-billable failed:', msg);
     return res.status(500).json({ success: false, message: msg });

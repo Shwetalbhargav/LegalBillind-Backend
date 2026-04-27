@@ -9,8 +9,8 @@ export { Invoice } from './Invoice.js';
 export { InvoiceLine } from './InvoiceLine.js';
 export { Payment } from './Payment.js';
 export { EmailEntry } from './EmailEntry.js';
-export { ClioToken } from './ClioToken.js';
-export { KpiSnapshot } from './KpiSnapshot.js';88
+export { default as ZohoConnection } from './ZohoConnection.js';
+export { KpiSnapshot } from './KpiSnapshot.js';
 export { default as User } from './User.js';
 export { default as Admin } from './admin.js';
 export { default as PartnerProfile } from './PartnerProfile.js';

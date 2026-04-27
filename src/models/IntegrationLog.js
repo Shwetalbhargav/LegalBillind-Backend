@@ -6,7 +6,7 @@ const IntegrationLogSchema = new mongoose.Schema(
     billableId: { type: mongoose.Schema.Types.ObjectId, ref: 'Billable' }, 
     invoiceId:  { type: mongoose.Schema.Types.ObjectId, ref: 'Invoice' },
 
-    platform: { type: String, enum: ['Clio', 'PracticePanther', 'MyCase'], required: true },
+    platform: { type: String, enum: ['Zoho', 'PracticePanther', 'MyCase'], required: true },
     status:   { type: String, enum: ['pending', 'success', 'failed'], default: 'pending', index: true },
 
     request:  { type: mongoose.Schema.Types.Mixed }, 

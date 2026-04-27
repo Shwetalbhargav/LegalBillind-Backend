@@ -10,7 +10,7 @@ import {
   generateNarrative,
   createActivityFromEmail,
   createTimeEntryFromEmail,
-  pushEmailEntryToClio,
+  syncEmailEntryToZoho,
   bulkIngest,
 } from '../controllers/emailEntryController.js';
 
@@ -32,7 +32,7 @@ router.post('/email-entries/:id/activity', createActivityFromEmail);
 router.post('/email-entries/:id/time-entry', createTimeEntryFromEmail);
 
 // Integrations
-router.post('/email-entries/:id/push-clio', pushEmailEntryToClio);
+router.post('/email-entries/:id/sync-zoho', syncEmailEntryToZoho);
 
 // Optional: batch ingest from the Chrome extension
 router.post('/email-entries/bulk', bulkIngest);

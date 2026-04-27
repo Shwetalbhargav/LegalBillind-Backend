@@ -7,8 +7,7 @@ import { Case } from '../models/Case.js';
 import { Client } from '../models/Client.js';
 import User from '../models/User.js';
 import { generateBillableSummary } from '../services/gptService.js';
-import { pushTimeEntryToClio } from '../services/clioService.js';
-import { mapRecipientToMatter } from '../services/matterMapService.js';
+import { ensureCaseInZoho, ensureClientInZoho } from '../services/zohoCrmService.js';
 
 // ---------- helpers ----------
 const oid = (v) => (mongoose.Types.ObjectId.isValid(String(v)) ? new mongoose.Types.ObjectId(v) : null);
@@ -269,27 +268,39 @@ export const createTimeEntryFromEmail = async (req, res) => {
   }
 };
 
-// ---------- Clio push (existing behavior) ----------
-export const pushEmailEntryToClio = async (req, res) => {
+// ---------- Zoho CRM sync ----------
+export const syncEmailEntryToZoho = async (req, res) => {
   try {
     const entry = await EmailEntry.findById(req.params.id);
     if (!entry) return res.status(404).json({ ok: false, message: 'Not found' });
 
-    const matterId = await mapRecipientToMatter(entry.recipient, entry.userId);
-    if (!matterId) return res.status(400).json({ ok: false, message: 'No Clio matter found for recipient' });
+    const client = await Client.findById(entry.clientId);
+    const matter = await Case.findById(entry.caseId);
+    if (!client || !matter) {
+      return res.status(400).json({ ok: false, message: 'Email entry must be mapped to a client and matter before Zoho sync' });
+    }
 
-    const qty = Math.max(hours(entry.typingTimeMinutes), 0.1);
-    const description = entry.billableSummary || entry.subject || 'Email work';
+    const zohoClient = await ensureClientInZoho(entry.userId, client);
+    const zohoMatter = await ensureCaseInZoho(entry.userId, matter, client, zohoClient.recordId);
 
-    const clioResp = await pushTimeEntryToClio({ userId: entry.userId, matterId, quantity: qty, description });
-    const clioActivityId = clioResp?.data?.id || clioResp?.id || clioResp?.data?.data?.id || null;
-
-    entry.meta = { ...(entry.meta || {}), clioPushed: true, clioActivityId, clioPushedAt: new Date() };
+    entry.meta = {
+      ...(entry.meta || {}),
+      zohoSynced: true,
+      zohoClientRecordId: zohoClient.recordId,
+      zohoMatterRecordId: zohoMatter.recordId,
+      zohoSyncedAt: new Date(),
+    };
     await entry.save();
 
-    res.json({ ok: true, data: { clioActivityId } });
+    res.json({
+      ok: true,
+      data: {
+        clientRecordId: zohoClient.recordId,
+        matterRecordId: zohoMatter.recordId,
+      },
+    });
   } catch (err) {
-    console.error('[Clio push]', err);
+    console.error('[Zoho sync]', err);
     res.status(500).json({ ok: false, message: err.message });
   }
 };
