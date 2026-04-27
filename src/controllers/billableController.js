@@ -77,7 +77,7 @@ export const createBillable = async (req, res) => {
 
 // ——— EmailEntry → Billable ————————————————————————————————
 async function resolveClientCaseByRecipient(req, recipient) {
-  // Replace with your real mapping or PracticePanther/Clio search
+  // Replace with your real mapping or Zoho CRM lookup
   return {
     clientId: req.app.locals.demoClientId,
     caseId:   req.app.locals.demoCaseId,

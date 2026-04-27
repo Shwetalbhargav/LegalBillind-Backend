@@ -21,8 +21,6 @@ import billableRoutes from './routes/billableRoutes.js';
 import caseAssignmentRoutes from './routes/caseAssignmentRoutes.js';
 import caseRoutes from './routes/caseRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';
-import clioAuthRoutes from './routes/clioAuth.js';
-import clioSyncRoutes from './routes/clioSync.js';
 import emailEntryRoutes from './routes/emailEntry.js';
 import firmRoutes from './routes/firmRoutes.js';
 import integrationLogRoutes from './routes/integrationLogRoutes.js';
@@ -39,6 +37,8 @@ import revenueRoutes from './routes/revenueRoutes.js';
 import timeEntryRoutes from './routes/timeEntryRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import kpiRoutes from './routes/kpiRoutes.js';
+import zohoAuthRoutes, { zohoCallbackHandler } from './routes/zohoAuth.js';
+import zohoSyncRoutes from './routes/zohoSync.js';
 
 
 
@@ -48,6 +48,7 @@ const app = express();
 // Trust proxy & health
 app.set('trust proxy', 1);
 app.get('/healthz', (req, res) => res.json({ ok: true }));
+app.get('/callback', zohoCallbackHandler);
 
 // DB
 connectDB();
@@ -122,9 +123,10 @@ dualMount('lawyer-profiles',    lawyerProfileRoutes);
 dualMount('intern-profiles',    internProfileRoutes);
 dualMount('associate-profiles', associateProfileRoutes);
 
-app.use('/clio', clioAuthRoutes);
-app.use('/api/clio', clioAuthRoutes);
+app.use('/integrations/zoho', zohoAuthRoutes);
+app.use('/api/integrations/zoho', zohoAuthRoutes);
 
-dualMount('clio-sync', clioSyncRoutes);
+app.use('/integrations/zoho-sync', zohoSyncRoutes);
+app.use('/api/integrations/zoho-sync', zohoSyncRoutes);
 
 export default app;

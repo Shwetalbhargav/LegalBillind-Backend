@@ -23,6 +23,13 @@ const InvoiceSchema = new mongoose.Schema(
     pdfUrl: { type: String },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    integrations: {
+      zoho: {
+        crmModule: { type: String, default: 'Invoices' },
+        crmRecordId: { type: String },
+        lastSyncedAt: { type: Date },
+      },
+    },
 
     items: [
       { 

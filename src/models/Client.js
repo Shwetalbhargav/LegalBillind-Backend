@@ -3,7 +3,18 @@
 import mongoose from 'mongoose';
 
 const ClientContactSchema = new mongoose.Schema(
-  { name: String, email: String, phone: String, role: String },
+  {
+    name: String,
+    email: String,
+    phone: String,
+    role: String,
+    integrations: {
+      zoho: {
+        crmRecordId: { type: String },
+        lastSyncedAt: { type: Date },
+      },
+    },
+  },
   { _id: false }
 );
 
@@ -20,6 +31,13 @@ const ClientSchema = new mongoose.Schema(
     status: { type: String, enum: ['active', 'inactive', 'prospect'], default: 'active', index: true },
     paymentTerms: { type: String, default: 'NET30' },
     contacts: { type: [ClientContactSchema], default: [] },
+    integrations: {
+      zoho: {
+        crmModule: { type: String, default: 'Accounts' },
+        crmRecordId: { type: String },
+        lastSyncedAt: { type: Date },
+      },
+    },
   },
   { timestamps: true }
 );
