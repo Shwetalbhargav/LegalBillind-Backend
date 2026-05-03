@@ -18,7 +18,6 @@ router.post('/integration-logs', createIntegrationLog);
 
 // Read/list (filters via query string)
 router.get('/integration-logs', listIntegrationLogs);
-router.get('/integration-logs/:id', getIntegrationLogById);
 
 // Convenience: by entity
 router.get('/integration-logs/by-billable/:billableId', listLogsByBillable);
@@ -26,6 +25,7 @@ router.get('/integration-logs/by-invoice/:invoiceId', listLogsByInvoice);
 
 // Aggregate stats
 router.get('/integration-logs/stats', logStats);
+router.get('/integration-logs/:id', getIntegrationLogById);
 
 // Delete (single) and purge (bulk-by-filter)
 router.delete('/integration-logs/:id', deleteIntegrationLog);
