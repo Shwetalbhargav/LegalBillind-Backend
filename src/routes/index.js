@@ -1,3 +1,5 @@
+// src/routes/index.js
+
 import { Router } from 'express';
 
 import { aiRoutes } from '../modules/ai/index.js';

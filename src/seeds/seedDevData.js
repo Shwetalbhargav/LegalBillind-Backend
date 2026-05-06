@@ -1,11 +1,11 @@
 import mongoose from 'mongoose';
-import { connectMongo, disconnectMongo } from '../db/connect.js';
+import connectDB from '../config/db.js';
 import { Firm, Client, Case, RateCard, Activity, TimeEntry, Invoice, InvoiceLine, Payment } from '../models/index.js';
 
 function oid() { return new mongoose.Types.ObjectId(); }
 
 async function run() {
-  await connectMongo();
+  await connectDB();
 
   // Clean minimal collections for fresh seed
   await Promise.all([
@@ -37,7 +37,7 @@ async function run() {
   await Payment.create({ invoiceId: inv._id, amount: inv.total, method: 'upi', receivedDate: new Date(), reference: 'UTR123456' });
 
   console.log('Seed complete:', { firm: firm._id.toString(), client: client._id.toString(), case: matter._id.toString(), invoice: inv._id.toString() });
-  await disconnectMongo();
+  await mongoose.disconnect();
 }
 
-run().catch(async (e) => { console.error(e); await disconnectMongo(); process.exit(1); });
+run().catch(async (e) => { console.error(e); await mongoose.disconnect(); process.exit(1); });

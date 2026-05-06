@@ -1,8 +1,5 @@
-import { connectMongo, disconnectMongo } from '../db/connect.js';
+import { expect, test } from 'vitest';
 import { TimeEntry } from '../modules/timeEntries/models/TimeEntry.js';
-
-beforeAll(async () => { await connectMongo(); });
-afterAll(async () => { await disconnectMongo(); });
 
 test('TimeEntry defaults and validation', async () => {
   const te = new TimeEntry({
