@@ -1,16 +1,10 @@
 //src/controllers/adminController.js
 
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import Admin from "../models/admin.js";
+import { clearAuthCookie, setAuthCookie, signAuthToken } from "../../auth/services/authTokenService.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
-
-function signToken(user) {
-  return jwt.sign({ id: user._id.toString(), role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-}
 function normName(s) { return (s || "").trim().replace(/\s+/g, " ").toLowerCase(); }
 
 function roleMeta(name) {
@@ -48,18 +42,12 @@ export const adminLogin = async (req, res) => {
     const ok = await bcrypt.compare(password, user.passwordHash || "");
     if (!ok) return res.status(401).json({ message: "Invalid credentials" });
 
-    const token = signToken(user);
-    if (process.env.SET_AUTH_COOKIE === "true") {
-      res.cookie("token", token, {
-        httpOnly: true, secure: process.env.NODE_ENV === "production",
-        sameSite: "lax", maxAge: 7 * 24 * 60 * 60 * 1000
-      });
-    }
+    const token = signAuthToken(user);
+    setAuthCookie(res, token);
 
     const profile = await Admin.findOne({ userId: user._id });
     const meta = roleMeta(user.name);
     return res.status(200).json({
-      token,
       user: toSafeUser(user),
       profile: toSafeAdminProfile(profile),
       ...meta,
@@ -86,10 +74,10 @@ export const adminRegister = async (req, res) => {
     const user = await User.create({ name, mobile, email, firmId, role: "admin", passwordHash });
     const admin = await Admin.create({ userId: user._id, name, mobile, email, address, qualifications, firmId });
 
-    const token = signToken(user);
+    const token = signAuthToken(user);
+    setAuthCookie(res, token);
     const meta = roleMeta(user.name);
     return res.status(201).json({
-      token,
       user: toSafeUser(user),
       profile: toSafeAdminProfile(admin),
       ...meta,
@@ -98,6 +86,11 @@ export const adminRegister = async (req, res) => {
     console.error("adminRegister error", e);
     return res.status(500).json({ message: "Unable to register admin" });
   }
+};
+
+export const adminLogout = (_req, res) => {
+  clearAuthCookie(res);
+  return res.json({ success: true });
 };
 
 /** GET /api/admin/me (optional) */

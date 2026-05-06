@@ -1,6 +1,7 @@
 import express from "express";
 import {
   adminLogin,
+  adminLogout,
   adminRegister,
   adminGetMe,
   adminUpdateMe,
@@ -18,6 +19,7 @@ const router = express.Router();
 /** Auth-style endpoints for Admins */
 router.post("/login", adminLogin);            // name+mobile+password (role enforced = admin)
 router.post("/register", adminRegister);      // create User(admin) + Admin profile
+router.post("/logout", adminLogout);
 
 /** Self-service */
 router.patch("/me", protect, adminOnly, adminUpdateMe);

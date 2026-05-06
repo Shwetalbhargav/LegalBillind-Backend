@@ -1,8 +1,8 @@
 //src/controllers/authController.js
 
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import User from "../../users/models/User.js";
+import { clearAuthCookie, setAuthCookie, signAuthToken } from "../services/authTokenService.js";
 
 // LOGIN —  uses name + mobile + password + role
 export const loginUser = async (req, res) => {
@@ -19,23 +19,11 @@ export const loginUser = async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.passwordHash);
     if (!isMatch) return res.status(400).json({ error: "Invalid credentials" });
 
-    const token = jwt.sign(
-      { id: user._id, role: user.role },
-      process.env.JWT_SECRET || "supersecretkey",
-      { expiresIn: "1d" }
-    );
-
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    const token = signAuthToken(user);
+    setAuthCookie(res, token);
 
     res.json({
       success: true,
-      token,
       user: {
         id: user._id,
         name: user.name,
@@ -49,6 +37,11 @@ export const loginUser = async (req, res) => {
     console.error("Login error:", err);
     res.status(500).json({ error: "Server error" });
   }
+};
+
+export const logoutUser = (_req, res) => {
+  clearAuthCookie(res);
+  res.json({ success: true });
 };
 
 // REGISTER — all fields of User schema

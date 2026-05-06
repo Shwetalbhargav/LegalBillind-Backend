@@ -1,27 +1,19 @@
 // middleware/auth.js
 import jwt from "jsonwebtoken";
+import { getJwtSecret } from "../modules/auth/services/authTokenService.js";
 
 /**
- * Authenticate a request using a JWT supplied either via:
- *  - Cookie: req.cookies.token
- *  - Header: Authorization: Bearer <token>
+ * Authenticate a request using a JWT supplied by the HTTP-only auth cookie.
  */
 export const authenticate = (req, res, next) => {
   try {
-    const token =
-      req.cookies?.token ||
-      (req.headers.authorization?.startsWith("Bearer ")
-        ? req.headers.authorization.split(" ")[1]
-        : null);
+    const token = req.cookies?.token;
 
     if (!token) {
       return res.status(401).json({ error: "Not authenticated" });
     }
 
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || "supersecretkey"
-    );
+    const decoded = jwt.verify(token, getJwtSecret());
 
     // Attach minimal identity to the request
     req.user = { id: decoded.id, role: decoded.role, email: decoded.email };
