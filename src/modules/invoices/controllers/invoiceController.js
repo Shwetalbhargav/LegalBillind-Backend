@@ -2,7 +2,7 @@
 import mongoose from 'mongoose';
 import { Invoice } from '../models/Invoice.js';
 import { InvoiceLine } from '../models/InvoiceLine.js';
-import { TimeEntry } from '../../../models/TimeEntry.js';
+import { TimeEntry } from '../../timeEntries/models/TimeEntry.js';
 
 /**
  * Utility: recalc invoice totals from InvoiceLine rows

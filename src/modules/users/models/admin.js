@@ -8,7 +8,6 @@ const AdminSchema = new mongoose.Schema({
   role: { type: String, enum: ['firm_admin', 'super_admin'], default: 'firm_admin' }
 }, { timestamps: true });
 
-AdminSchema.index({ userId: 1 }, { unique: true });
 AdminSchema.index({ firmId: 1 });
 
 const Admin = mongoose.model('Admin', AdminSchema);

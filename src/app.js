@@ -6,8 +6,6 @@ import cookieParser from 'cookie-parser';
 
 dotenv.config();
 
-// Core
-import connectDB from './config/db.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { notFound } from './middleware/notFound.js';
 
@@ -15,28 +13,22 @@ import { notFound } from './middleware/notFound.js';
 import apiRoutes from './routes/index.js';
 
 // Legacy route aliases
-import activityRoutes from './routes/activityRoutes.js';
-import aiRoutes from './routes/aiRoutes.js';
-import analyticsRoutes from './routes/analyticsRoutes.js';
-import arRoutes from './routes/arRoutes.js';
-import authRoutes from './routes/authRoutes.js';
-import billableRoutes from './routes/billableRoutes.js';
-import caseAssignmentRoutes from './routes/caseAssignmentRoutes.js';
-import caseRoutes from './routes/caseRoutes.js';
-import clientRoutes from './routes/clientRoutes.js';
-import emailEntryRoutes from './routes/emailEntry.js';
-import firmRoutes from './routes/firmRoutes.js';
-import integrationLogRoutes from './routes/integrationLogRoutes.js';
-import kpiSnapshotRoutes from './routes/kpiSnapshotRoutes.js';
-import paymentRoutes from './routes/paymentRoutes.js';
-import rateCardRoutes from './routes/rateCardRoutes.js';
-import reportsRoutes from './routes/reportsRoutes.js';
-import revenueRoutes from './routes/revenueRoutes.js';
-import timeEntryRoutes from './routes/timeEntryRoutes.js';
-import kpiRoutes from './routes/kpiRoutes.js';
-import zohoAuthRoutes, { zohoCallbackHandler } from './routes/zohoAuth.js';
-import zohoSyncRoutes from './routes/zohoSync.js';
+import { aiRoutes } from './modules/ai/index.js';
+import { activityRoutes } from './modules/activities/index.js';
+import { analyticsRoutes, revenueRoutes } from './modules/analytics/index.js';
+import { authRoutes } from './modules/auth/index.js';
+import { billableRoutes } from './modules/billables/index.js';
+import { caseAssignmentRoutes, caseRoutes } from './modules/cases/index.js';
+import { clientRoutes } from './modules/clients/index.js';
+import { emailEntryRoutes } from './modules/emailEntries/index.js';
+import { firmRoutes } from './modules/firms/index.js';
 import { invoiceLineRoutes, invoiceRoutes } from './modules/invoices/index.js';
+import { integrationLogRoutes, zohoAuthRoutes, zohoCallbackHandler, zohoSyncRoutes } from './modules/integrations/index.js';
+import { kpiRoutes, kpiSnapshotRoutes } from './modules/kpi/index.js';
+import { arRoutes, paymentRoutes } from './modules/payments/index.js';
+import { rateCardRoutes } from './modules/rates/index.js';
+import { reportsRoutes } from './modules/reports/index.js';
+import { timeEntryRoutes } from './modules/timeEntries/index.js';
 import {
   adminRoutes,
   associateProfileRoutes,
@@ -56,16 +48,28 @@ app.set('trust proxy', 1);
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/callback', zohoCallbackHandler);
 
-// DB
-connectDB();
+const configuredOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.CORS_ORIGINS,
+]
+  .filter(Boolean)
+  .flatMap((value) => value.split(','))
+  .map((value) => value.trim().replace(/\/$/, ''))
+  .filter(Boolean);
 
-
-
+const allowedOrigins = new Set(configuredOrigins);
 
 app.use(
   cors({
-    origin: true,        
-    credentials: true,   
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      const normalizedOrigin = origin.replace(/\/$/, '');
+      if (allowedOrigins.has(normalizedOrigin)) return callback(null, true);
+      const error = new Error('Origin not allowed by CORS');
+      error.statusCode = 403;
+      return callback(error);
+    },
+    credentials: true,
   })
 );
 
@@ -78,22 +82,20 @@ app.use(cookieParser());
 app.use('/api', apiRoutes);
 
 // Legacy aliases kept during frontend/extension migration.
-app.use('/', activityRoutes);
-app.use('/', analyticsRoutes);
-app.use('/', arRoutes);
-app.use('/', caseAssignmentRoutes);
-app.use('/', caseRoutes);
-app.use('/', clientRoutes);
-app.use('/', emailEntryRoutes);
-app.use('/', firmRoutes);
-app.use('/', integrationLogRoutes);
-
-// Resource-relative routers -> mount at '/<resource>' AND '/api/<resource>'
 const legacyMount = (resourcePath, router) => {
   app.use(`/${resourcePath}`, router);
 };
 
+legacyMount('activities',       activityRoutes);
+legacyMount('analytics',        analyticsRoutes);
+legacyMount('ar',               arRoutes);
 legacyMount('billables',        billableRoutes);
+legacyMount('case-assignments', caseAssignmentRoutes);
+legacyMount('cases',            caseRoutes);
+legacyMount('clients',          clientRoutes);
+legacyMount('email-entries',    emailEntryRoutes);
+legacyMount('firms',            firmRoutes);
+legacyMount('integration-logs', integrationLogRoutes);
 legacyMount('invoices',         invoiceRoutes);
 app.use('/invoices/:invoiceId/lines', invoiceLineRoutes);
 legacyMount('kpi-snapshots',    kpiSnapshotRoutes);

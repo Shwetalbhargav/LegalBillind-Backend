@@ -1,5 +1,5 @@
 import { connectMongo, disconnectMongo } from '../db/connect.js';
-import { TimeEntry } from '../models/TimeEntry.js';
+import { TimeEntry } from '../modules/timeEntries/models/TimeEntry.js';
 
 beforeAll(async () => { await connectMongo(); });
 afterAll(async () => { await disconnectMongo(); });

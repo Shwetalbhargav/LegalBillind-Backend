@@ -1,5 +1,5 @@
 import { connectMongo, disconnectMongo } from '../db/connect.js';
-import { Invoice } from '../models/Invoice.js';
+import { Invoice } from '../modules/invoices/models/Invoice.js';
 
 beforeAll(async () => { await connectMongo(); });
 afterAll(async () => { await disconnectMongo(); });

@@ -1,5 +1,9 @@
-// src/routes/userRoutes.js
 import { Router } from 'express';
+import { authenticate, authorize } from '../../../middleware/auth.js';
+import {
+  validateCreateUser,
+  validateUpdateUser,
+} from '../validators/userValidators.js';
 import {
   createUser,
   updateUser,
@@ -15,6 +19,8 @@ import {
 
 const router = Router();
 
+router.use(authenticate);
+
 /**
  * Examples:
  *  POST   /api/users
@@ -28,18 +34,18 @@ const router = Router();
  *  GET    /api/users/me
  *  GET    /api/users/me/scopes
  */
-router.post('/', createUser);
-router.get('/', listUsers);
+router.post('/', authorize('admin', 'partner'), validateCreateUser, createUser);
+router.get('/', authorize('admin', 'partner'), listUsers);
 
 router.get('/me/self', getMyScopes); // keep /me route unshadowed
 router.get('/me', getMe);
 
 router.get('/:id', getUserById);
-router.put('/:id', updateUser);
-router.delete('/:id', deleteUser);
+router.put('/:id', authorize('admin', 'partner'), validateUpdateUser, updateUser);
+router.delete('/:id', authorize('admin'), deleteUser);
 
 router.get('/:id/profile', getUserProfile);
-router.put('/:id/profile', upsertUserProfile);
+router.put('/:id/profile', authorize('admin', 'partner'), upsertUserProfile);
 router.get('/:id/default-rate', getUserDefaultRate);
 
 export default router;

@@ -1,30 +1,24 @@
 import { Router } from 'express';
 
-import activityRoutes from './activityRoutes.js';
-import analyticsRoutes from './analyticsRoutes.js';
-import arRoutes from './arRoutes.js';
-import authRoutes from './authRoutes.js';
-import billableRoutes from './billableRoutes.js';
-import caseAssignmentRoutes from './caseAssignmentRoutes.js';
-import caseRoutes from './caseRoutes.js';
-import clientRoutes from './clientRoutes.js';
-import emailEntryRoutes from './emailEntry.js';
-import firmRoutes from './firmRoutes.js';
-import integrationLogRoutes from './integrationLogRoutes.js';
-import kpiRoutes from './kpiRoutes.js';
-import kpiSnapshotRoutes from './kpiSnapshotRoutes.js';
-import paymentRoutes from './paymentRoutes.js';
-import rateCardRoutes from './rateCardRoutes.js';
-import reportsRoutes from './reportsRoutes.js';
-import revenueRoutes from './revenueRoutes.js';
-import timeEntryRoutes from './timeEntryRoutes.js';
-import zohoAuthRoutes from './zohoAuth.js';
-import zohoSyncRoutes from './zohoSync.js';
-import aiRoutes from './aiRoutes.js';
+import { aiRoutes } from '../modules/ai/index.js';
+import { activityRoutes } from '../modules/activities/index.js';
+import { analyticsRoutes, revenueRoutes } from '../modules/analytics/index.js';
+import { authRoutes } from '../modules/auth/index.js';
+import { billableRoutes } from '../modules/billables/index.js';
+import { caseAssignmentRoutes, caseRoutes } from '../modules/cases/index.js';
+import { clientRoutes } from '../modules/clients/index.js';
+import { emailEntryRoutes } from '../modules/emailEntries/index.js';
+import { firmRoutes } from '../modules/firms/index.js';
 import {
   invoiceLineRoutes,
   invoiceRoutes,
 } from '../modules/invoices/index.js';
+import { integrationLogRoutes, zohoAuthRoutes, zohoSyncRoutes } from '../modules/integrations/index.js';
+import { kpiRoutes, kpiSnapshotRoutes } from '../modules/kpi/index.js';
+import { arRoutes, paymentRoutes } from '../modules/payments/index.js';
+import { rateCardRoutes } from '../modules/rates/index.js';
+import { reportsRoutes } from '../modules/reports/index.js';
+import { timeEntryRoutes } from '../modules/timeEntries/index.js';
 import {
   adminRoutes,
   associateProfileRoutes,
@@ -36,19 +30,17 @@ import {
 
 const router = Router();
 
-// Current routers that already define absolute resource paths internally.
-router.use('/', activityRoutes);
-router.use('/', analyticsRoutes);
-router.use('/', arRoutes);
-router.use('/', caseAssignmentRoutes);
-router.use('/', caseRoutes);
-router.use('/', clientRoutes);
-router.use('/', emailEntryRoutes);
-router.use('/', firmRoutes);
-router.use('/', integrationLogRoutes);
-
-// Current routers that define paths relative to their resource.
+// Resource-relative routers.
+router.use('/activities', activityRoutes);
+router.use('/analytics', analyticsRoutes);
+router.use('/ar', arRoutes);
 router.use('/billables', billableRoutes);
+router.use('/case-assignments', caseAssignmentRoutes);
+router.use('/cases', caseRoutes);
+router.use('/clients', clientRoutes);
+router.use('/email-entries', emailEntryRoutes);
+router.use('/firms', firmRoutes);
+router.use('/integration-logs', integrationLogRoutes);
 router.use('/invoices', invoiceRoutes);
 router.use('/invoices/:invoiceId/lines', invoiceLineRoutes);
 router.use('/kpi-snapshots', kpiSnapshotRoutes);

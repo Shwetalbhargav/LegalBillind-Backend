@@ -24,8 +24,5 @@ const UserSchema = new mongoose.Schema({
     { degree: String, university: String, year: Number }
   ]
 });
-UserSchema.index({ name: 1 }, { unique: true });
-UserSchema.index({ mobile: 1 }, { unique: true, sparse: true });
-
 const User = mongoose.model('User', UserSchema);
 export default User;
