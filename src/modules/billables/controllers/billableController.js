@@ -5,6 +5,7 @@ import {EmailEntry} from '../../emailEntries/models/EmailEntry.js';
 import User from '../../users/models/User.js';
 import {Firm} from '../../firms/models/Firm.js';
 import {Case} from '../../cases/models/Case.js';
+import {Client} from '../../clients/models/Client.js';
 
 // Map from activityCode → category (fallbacks to keep data consistent)
 const CATEGORY_BY_CODE = {
@@ -19,7 +20,7 @@ const CATEGORY_BY_CODE = {
 };
 
 function roundToIncrement(mins, increment = 6) {
-  return Math.max(increment, Math.ceil(mins / increment) * increment);
+  return Math.max(increment, Math.ceil(Number(mins || 0) / increment) * increment);
 }
 
 // ——— Manual create ————————————————————————————————————————————————
@@ -76,26 +77,34 @@ export const createBillable = async (req, res) => {
 };
 
 // ——— EmailEntry → Billable ————————————————————————————————
-async function resolveClientCaseByRecipient(req, recipient) {
-  // Replace with your real mapping or Zoho CRM lookup
-  return {
-    clientId: req.app.locals.demoClientId,
-    caseId:   req.app.locals.demoCaseId,
-    rate:     300
-  };
-}
-
 export const createFromEmail = async (req, res) => {
   try {
     const { emailEntryId } = req.params;
     const email = await EmailEntry.findById(emailEntryId);
     if (!email) return res.status(404).json({ error: 'EmailEntry not found' });
 
-    const { clientId, caseId, rate } = await resolveClientCaseByRecipient(req, email.recipient);
+    const clientId = email.clientId || email.mappedClientId;
+    const caseId = email.caseId || email.mappedCaseId;
     if (!clientId || !caseId) {
-      return res.status(422).json({ error: 'Unable to resolve client/case from recipient' });
+      return res.status(422).json({ error: 'Email entry must be mapped to a client and case before creating a billable' });
     }
 
+    const existing = await Billable.findOne({
+      userId: email.userId,
+      clientId,
+      caseId,
+      subject: email.subject,
+      date: email.workDate || email.createdAt,
+      activityCode: 'EMAIL',
+    });
+    if (existing) {
+      return res.status(200).json(existing);
+    }
+
+    const user = email.userId ? await User.findById(email.userId) : null;
+    const client = await Client.findById(clientId);
+    const firm = user?.firmId ? await Firm.findById(user.firmId) : client?.firmId ? await Firm.findById(client.firmId) : null;
+    const rate = Number(email.rate ?? user?.billingRate ?? firm?.billingPreferences?.defaultRate ?? 0);
     const durationMinutes = roundToIncrement(email.typingTimeMinutes, 6);
     const amount = Number(((durationMinutes / 60) * rate).toFixed(2));
 
@@ -110,9 +119,12 @@ export const createFromEmail = async (req, res) => {
       durationMinutes,
       rate,
       amount,
-      date: email.createdAt,
+      date: email.workDate || email.createdAt,
       status: 'Pending'
     });
+
+    email.meta = { ...(email.meta || {}), billableId: billable._id };
+    await email.save();
 
     res.status(201).json(billable);
   } catch (e) {

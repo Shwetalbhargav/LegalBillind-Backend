@@ -1,12 +1,12 @@
 import express from 'express';
 import { authenticate } from '../../../middleware/auth.js';
-import { buildZohoAuthUrl, exchangeZohoCode, getZohoConfig, getValidZohoConnection, saveZohoConnection } from '../services/zohoAuthService.js';
+import { buildZohoAuthUrl, decodeZohoState, exchangeZohoCode, getZohoConfig, getValidZohoConnection, saveZohoConnection } from '../services/zohoAuthService.js';
 import { fetchZohoCurrentUser } from '../services/zohoCrmService.js';
 
 const router = express.Router();
 
 export function zohoConnectHandler(req, res) {
-  const userId = req.user?.id || req.user?._id?.toString() || req.query.userId;
+  const userId = req.user?.id || req.user?._id?.toString();
   if (!userId) {
     return res.status(401).send('User must be logged in to connect Zoho.');
   }
@@ -20,11 +20,12 @@ export async function zohoCallbackHandler(req, res) {
   }
 
   try {
+    const userId = decodeZohoState(state);
     const tokenData = await exchangeZohoCode({
       code,
       accountsServer,
     });
-    await saveZohoConnection(state, {
+    await saveZohoConnection(userId, {
       ...tokenData,
       location,
       accountsServer,
@@ -37,7 +38,7 @@ export async function zohoCallbackHandler(req, res) {
 }
 
 export async function zohoStatusHandler(req, res) {
-  const userId = req.user?.id || req.user?._id?.toString() || req.query.userId;
+  const userId = req.user?.id || req.user?._id?.toString();
   if (!userId) {
     return res.status(401).json({ connected: false, reason: 'not_logged_in' });
   }

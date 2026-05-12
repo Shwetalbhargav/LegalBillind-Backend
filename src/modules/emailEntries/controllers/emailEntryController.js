@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { EmailEntry } from '../models/EmailEntry.js';
 import { Activity } from '../../activities/models/Activity.js';
 import { TimeEntry } from '../../timeEntries/models/TimeEntry.js';
+import Billable from '../../billables/models/Billable.js';
 import { Case } from '../../cases/models/Case.js';
 import { Client } from '../../clients/models/Client.js';
 import User from '../../users/models/User.js';
@@ -12,8 +13,102 @@ import { ensureCaseInZoho, ensureClientInZoho } from '../../integrations/service
 // ---------- helpers ----------
 const oid = (v) => (mongoose.Types.ObjectId.isValid(String(v)) ? new mongoose.Types.ObjectId(v) : null);
 const minutes = (m) => Math.max(Number(m || 0), 0);
-const hours = (m) => Math.max(Number(m || 0) / 60, 0);
 const cleanStr = (s, d='') => (typeof s === 'string' ? s : d);
+const EMAIL_CATEGORY = 'Email drafting/review';
+
+function roundToIncrement(mins, increment = 6) {
+  return Math.max(increment, Math.ceil(minutes(mins) / increment) * increment);
+}
+
+function getEmailMinutes(entry) {
+  if (entry.typingTimeMinutes != null) return minutes(entry.typingTimeMinutes);
+  return minutes(entry.typingTimeSeconds) / 60;
+}
+
+async function ensureActivityForEmail(entry, { clientId, caseId }) {
+  if (oid(entry.meta?.activityId)) {
+    const existing = await Activity.findById(entry.meta.activityId);
+    if (existing) return existing;
+  }
+
+  const activity = await Activity.findOne({
+    source: 'extension',
+    sourceRef: String(entry._id),
+    activityType: 'email',
+  });
+  if (activity) return activity;
+
+  return Activity.create({
+    userId: entry.userId,
+    clientId,
+    caseId,
+    activityType: 'email',
+    durationMinutes: getEmailMinutes(entry),
+    narrative: entry.billableSummary || `Email: ${entry.subject}`,
+    source: 'extension',
+    sourceRef: String(entry._id),
+    activityCode: 'EMAIL',
+  });
+}
+
+async function ensureTimeEntryForEmail(entry, { clientId, caseId, activityId, body }) {
+  if (oid(entry.meta?.timeEntryId)) {
+    const existing = await TimeEntry.findById(entry.meta.timeEntryId);
+    if (existing) return existing;
+  }
+
+  const existing = await TimeEntry.findOne({ activityId });
+  if (existing) return existing;
+
+  const billableMinutes = roundToIncrement(getEmailMinutes(entry));
+  const rateApplied = body.rateApplied ?? body.rate ?? entry.rate;
+  const amount = rateApplied != null ? Number((Number(rateApplied) * (billableMinutes / 60)).toFixed(2)) : undefined;
+
+  return TimeEntry.create({
+    userId: entry.userId,
+    clientId,
+    caseId,
+    activityId,
+    activityCode: 'EMAIL',
+    narrative: entry.billableSummary || `Email: ${entry.subject}`,
+    billableMinutes,
+    nonbillableMinutes: 0,
+    rateApplied: rateApplied ?? undefined,
+    amount,
+    date: body.date ? new Date(body.date) : entry.workDate || entry.createdAt || new Date(),
+    status: body.status || 'submitted',
+  });
+}
+
+async function ensureBillableForEmail(entry, { clientId, caseId, activityId, timeEntry }) {
+  if (oid(entry.meta?.billableId)) {
+    const existing = await Billable.findById(entry.meta.billableId);
+    if (existing) return existing;
+  }
+
+  const existing = await Billable.findOne({ activityId });
+  if (existing) return existing;
+
+  const durationMinutes = roundToIncrement(timeEntry.billableMinutes || getEmailMinutes(entry));
+  const rate = Number(timeEntry.rateApplied ?? entry.rate ?? 0);
+  const amount = Number((rate * (durationMinutes / 60)).toFixed(2));
+
+  return Billable.create({
+    caseId,
+    clientId,
+    userId: entry.userId,
+    activityId,
+    subject: entry.subject,
+    activityCode: 'EMAIL',
+    category: EMAIL_CATEGORY,
+    description: entry.billableSummary || `Email: ${entry.subject}`,
+    durationMinutes,
+    rate,
+    amount,
+    date: timeEntry.date || entry.workDate || entry.createdAt || new Date(),
+    status: 'Pending',
+  });
+}
 
 // best-effort resolver to ensure we have client/case
 async function ensureClientAndCase({ clientId, caseId, recipient }) {
@@ -209,16 +304,7 @@ export const createActivityFromEmail = async (req, res) => {
       recipient: entry.recipient
     });
 
-    const activity = await Activity.create({
-      userId: entry.userId,
-      clientId,
-      caseId,
-      activityType: 'email',
-      durationMinutes: minutes(entry.typingTimeMinutes),
-      narrative: entry.billableSummary || `Email: ${entry.subject}`,
-      source: 'extension',
-      sourceRef: String(entry._id)
-    });
+    const activity = await ensureActivityForEmail(entry, { clientId, caseId });
 
     // keep a backlink in meta
     entry.meta = { ...(entry.meta || {}), activityId: activity._id };
@@ -242,27 +328,29 @@ export const createTimeEntryFromEmail = async (req, res) => {
       recipient: entry.recipient
     });
 
-    const billableMinutes = minutes(entry.typingTimeMinutes);
-    const { status = 'submitted', rateApplied, date } = req.body || {};
-
-    const timeEntry = await TimeEntry.create({
-      userId: entry.userId,
+    const activity = await ensureActivityForEmail(entry, { clientId, caseId });
+    const timeEntry = await ensureTimeEntryForEmail(entry, {
       clientId,
       caseId,
-      activityId: entry.meta?.activityId, // may be undefined
-      narrative: entry.billableSummary || `Email: ${entry.subject}`,
-      billableMinutes,
-      nonbillableMinutes: 0,
-      rateApplied: rateApplied ?? undefined,
-      amount: rateApplied ? +(Number(rateApplied) * hours(billableMinutes)).toFixed(2) : undefined,
-      date: date ? new Date(date) : new Date(),
-      status
+      activityId: activity._id,
+      body: req.body || {},
+    });
+    const billable = await ensureBillableForEmail(entry, {
+      clientId,
+      caseId,
+      activityId: activity._id,
+      timeEntry,
     });
 
-    entry.meta = { ...(entry.meta || {}), timeEntryId: timeEntry._id };
+    entry.meta = {
+      ...(entry.meta || {}),
+      activityId: activity._id,
+      timeEntryId: timeEntry._id,
+      billableId: billable._id,
+    };
     await entry.save();
 
-    res.status(201).json({ ok: true, data: timeEntry });
+    res.status(201).json({ ok: true, data: timeEntry, activity, billable });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
   }

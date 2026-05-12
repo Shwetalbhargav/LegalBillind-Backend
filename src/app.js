@@ -18,7 +18,15 @@ const app = express();
 app.set('trust proxy', 1);
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
+const defaultLocalOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:5180',
+  'http://127.0.0.1:5180',
+];
+
 const configuredOrigins = [
+  ...defaultLocalOrigins,
   process.env.FRONTEND_URL,
   process.env.CORS_ORIGINS,
 ]

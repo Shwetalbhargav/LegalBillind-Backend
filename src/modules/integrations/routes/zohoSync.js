@@ -23,7 +23,7 @@ const router = express.Router();
 router.use(authenticate);
 
 function resolveUserId(req) {
-  return req.user?.id || req.user?._id?.toString() || req.body.userId || req.query.userId;
+  return req.user?.id || req.user?._id?.toString();
 }
 
 router.get('/modules', async (req, res) => {

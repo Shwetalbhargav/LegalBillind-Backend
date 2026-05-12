@@ -4,16 +4,35 @@ import mongoose from 'mongoose';
 import { TimeEntry } from '../../timeEntries/models/TimeEntry.js';
 import { Invoice } from '../../invoices/models/Invoice.js';
 
-/**
- * Utilities
- */
 function asDate(s, fallback = null) {
   if (!s) return fallback;
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? fallback : d;
 }
-function sendCsv(res, rows, filename) {
-  const parser = new Json2csv();
+
+function asObjectId(value) {
+  if (!value) return null;
+  return mongoose.Types.ObjectId.isValid(String(value)) ? new mongoose.Types.ObjectId(value) : false;
+}
+
+function idString(value) {
+  return value?._id ? String(value._id) : value ? String(value) : '';
+}
+
+function displayClient(client) {
+  return client?.displayName || client?.name || '';
+}
+
+function displayCase(matter) {
+  return matter?.title || matter?.name || '';
+}
+
+function displayUser(user) {
+  return user?.name || user?.email || '';
+}
+
+function sendCsv(res, rows, filename, fields) {
+  const parser = new Json2csv({ fields });
   const csv = parser.parse(rows);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -29,11 +48,17 @@ export const exportTimeEntriesCsv = async (req, res) => {
     const { clientId, caseId, userId, status } = req.query;
     const from = asDate(req.query.from);
     const to = asDate(req.query.to);
+    const clientObjectId = asObjectId(clientId);
+    const caseObjectId = asObjectId(caseId);
+    const userObjectId = asObjectId(userId);
+    if ((clientId && !clientObjectId) || (caseId && !caseObjectId) || (userId && !userObjectId)) {
+      return res.status(400).json({ error: 'Invalid clientId, caseId, or userId' });
+    }
 
     const q = {};
-    if (clientId) q.clientId = new mongoose.Types.ObjectId(clientId);
-    if (caseId) q.caseId = new mongoose.Types.ObjectId(caseId);
-    if (userId) q.userId = new mongoose.Types.ObjectId(userId);
+    if (clientObjectId) q.clientId = clientObjectId;
+    if (caseObjectId) q.caseId = caseObjectId;
+    if (userObjectId) q.userId = userObjectId;
     if (status) q.status = status;
     if (from || to) {
       q.date = {};
@@ -43,14 +68,21 @@ export const exportTimeEntriesCsv = async (req, res) => {
 
     const rows = await TimeEntry.find(q)
       .select('date clientId caseId userId narrative billableMinutes nonbillableMinutes rateApplied amount status createdAt updatedAt')
+      .populate('clientId', 'displayName name')
+      .populate('caseId', 'title name')
+      .populate('userId', 'name email role')
       .sort({ date: 1 })
       .lean();
 
     const shaped = rows.map(r => ({
       date: r.date?.toISOString()?.slice(0, 10),
-      clientId: r.clientId,
-      caseId: r.caseId,
-      userId: r.userId,
+      clientId: idString(r.clientId),
+      clientName: displayClient(r.clientId),
+      caseId: idString(r.caseId),
+      caseTitle: displayCase(r.caseId),
+      userId: idString(r.userId),
+      userName: displayUser(r.userId),
+      userRole: r.userId?.role || '',
       narrative: r.narrative,
       billableMinutes: r.billableMinutes || 0,
       nonbillableMinutes: r.nonbillableMinutes || 0,
@@ -61,7 +93,24 @@ export const exportTimeEntriesCsv = async (req, res) => {
       updatedAt: r.updatedAt?.toISOString(),
     }));
 
-    return sendCsv(res, shaped, 'time-entries.csv');
+    return sendCsv(res, shaped, 'time-entries.csv', [
+      'date',
+      'clientId',
+      'clientName',
+      'caseId',
+      'caseTitle',
+      'userId',
+      'userName',
+      'userRole',
+      'narrative',
+      'billableMinutes',
+      'nonbillableMinutes',
+      'rateApplied',
+      'amount',
+      'status',
+      'createdAt',
+      'updatedAt',
+    ]);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to export time entries CSV' });
@@ -77,10 +126,15 @@ export const exportInvoicesCsv = async (req, res) => {
     const { clientId, caseId, status } = req.query;
     const from = asDate(req.query.from);
     const to = asDate(req.query.to);
+    const clientObjectId = asObjectId(clientId);
+    const caseObjectId = asObjectId(caseId);
+    if ((clientId && !clientObjectId) || (caseId && !caseObjectId)) {
+      return res.status(400).json({ error: 'Invalid clientId or caseId' });
+    }
 
     const q = {};
-    if (clientId) q.clientId = new mongoose.Types.ObjectId(clientId);
-    if (caseId) q.caseId = new mongoose.Types.ObjectId(caseId);
+    if (clientObjectId) q.clientId = clientObjectId;
+    if (caseObjectId) q.caseId = caseObjectId;
     if (status) q.status = status;
     if (from || to) {
       q.issueDate = {};
@@ -89,15 +143,21 @@ export const exportInvoicesCsv = async (req, res) => {
     }
 
     const rows = await Invoice.find(q)
-      .select('issueDate dueDate clientId caseId subtotal tax total status createdAt updatedAt')
+      .select('issueDate dueDate clientId caseId currency subtotal tax total status createdAt updatedAt')
+      .populate('clientId', 'displayName name')
+      .populate('caseId', 'title name')
       .sort({ issueDate: 1 })
       .lean();
 
     const shaped = rows.map(r => ({
+      invoiceId: idString(r._id),
       issueDate: r.issueDate?.toISOString()?.slice(0, 10),
       dueDate: r.dueDate ? r.dueDate.toISOString().slice(0, 10) : '',
-      clientId: r.clientId,
-      caseId: r.caseId ?? '',
+      clientId: idString(r.clientId),
+      clientName: displayClient(r.clientId),
+      caseId: idString(r.caseId),
+      caseTitle: displayCase(r.caseId),
+      currency: r.currency || 'INR',
       subtotal: r.subtotal ?? 0,
       tax: r.tax ?? 0,
       total: r.total ?? 0,
@@ -106,7 +166,22 @@ export const exportInvoicesCsv = async (req, res) => {
       updatedAt: r.updatedAt?.toISOString(),
     }));
 
-    return sendCsv(res, shaped, 'invoices.csv');
+    return sendCsv(res, shaped, 'invoices.csv', [
+      'invoiceId',
+      'issueDate',
+      'dueDate',
+      'clientId',
+      'clientName',
+      'caseId',
+      'caseTitle',
+      'currency',
+      'subtotal',
+      'tax',
+      'total',
+      'status',
+      'createdAt',
+      'updatedAt',
+    ]);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to export invoices CSV' });
@@ -163,7 +238,13 @@ export const exportUtilizationCsv = async (req, res) => {
       utilization: Number((r.utilization * 100).toFixed(2)), // %
     }));
 
-    return sendCsv(res, shaped, `utilization_${groupBy}.csv`);
+    return sendCsv(res, shaped, `utilization_${groupBy}.csv`, [
+      'groupBy',
+      'groupId',
+      'billableMinutes',
+      'nonbillableMinutes',
+      'utilization',
+    ]);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to export utilization CSV' });
