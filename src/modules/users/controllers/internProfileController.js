@@ -8,7 +8,7 @@ const isValidId = (id) => mongoose.isValidObjectId(id);
 
 export const createInternProfile = async (req, res) => {
   try {
-    const { userId, lawSchool, graduationYear, mentor, internshipFocus, billingRate } = req.body;
+    const { userId, photoUrl, lawSchool, graduationYear, mentor, internshipFocus, billingRate } = req.body;
 
     if (!isValidId(userId)) return res.status(400).json({ error: "Invalid userId" });
     if (mentor && !isValidId(mentor)) return res.status(400).json({ error: "Invalid mentor id" });
@@ -19,6 +19,7 @@ export const createInternProfile = async (req, res) => {
 
     const profile = new InternProfile({
       userId,
+      photoUrl,
       lawSchool,
       graduationYear,
       mentor,

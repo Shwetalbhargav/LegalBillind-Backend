@@ -14,6 +14,7 @@ export const createPartnerProfile = async (req, res) => {
     const {
       userId: userIdInBody,
       title,
+      photoUrl,
       specialization,
       experienceYears,
       landmarkCases,
@@ -36,6 +37,7 @@ export const createPartnerProfile = async (req, res) => {
 
     const profile = new PartnerProfile({
       userId: targetUserId,
+      photoUrl,
       title,
       specialization,
       experienceYears,

@@ -16,7 +16,7 @@ const isValidId = (id) => mongoose.isValidObjectId(id);
  */
 export const createAssociateProfile = async (req, res) => {
   try {
-    const { userId, specialization, experienceYears, achievements, billingRate } = req.body;
+    const { userId, photoUrl, specialization, experienceYears, achievements, billingRate } = req.body;
 
     if (!isValidId(userId)) return res.status(400).json({ error: "Invalid userId" });
 
@@ -26,6 +26,7 @@ export const createAssociateProfile = async (req, res) => {
 
     const profile = new AssociateProfile({
       userId,
+      photoUrl,
       specialization,
       experienceYears,
       achievements,
