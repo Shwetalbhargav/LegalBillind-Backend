@@ -4,6 +4,22 @@ import bcrypt from "bcryptjs";
 import User from "../../users/models/User.js";
 import { clearAuthCookie, setAuthCookie, signAuthToken } from "../services/authTokenService.js";
 
+function isDuplicateUserError(err) {
+  return err?.code === 11000 && (err?.keyPattern?.name || err?.keyPattern?.mobile);
+}
+
+function toSafeUser(user) {
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    mobile: user.mobile,
+    role: user.role,
+    address: user.address,
+    qualifications: user.qualifications,
+  };
+}
+
 // LOGIN —  uses name + mobile + password + role
 export const loginUser = async (req, res) => {
   
@@ -24,14 +40,7 @@ export const loginUser = async (req, res) => {
 
     res.json({
       success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        mobile: user.mobile,
-        role: user.role,
-        address: user.address,
-        qualifications: user.qualifications,
-      },
+      user: toSafeUser(user),
     });
   } catch (err) {
     console.error("Login error:", err);
@@ -53,8 +62,13 @@ export const registerUser = async (req, res) => {
       return res.status(400).json({ error: "Name, mobile, password and role are required" });
     }
 
-    const existing = await User.findOne({ name, mobile, role });
-    if (existing) return res.status(400).json({ error: "User already exists with this name and mobile" });
+    const existing = await User.findOne({
+      $or: [
+        { name },
+        { mobile },
+      ],
+    });
+    if (existing) return res.status(409).json({ error: "User already exists with this name or mobile" });
 
     const passwordHash = await bcrypt.hash(password, 10);
 
@@ -71,16 +85,12 @@ export const registerUser = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        mobile: user.mobile,
-        role: user.role,
-        address: user.address,
-        qualifications: user.qualifications,
-      },
+      user: toSafeUser(user),
     });
   } catch (err) {
+    if (isDuplicateUserError(err)) {
+      return res.status(409).json({ error: "User already exists with this name or mobile" });
+    }
     console.error("Register error:", err);
     res.status(500).json({ error: "Server error" });
   }

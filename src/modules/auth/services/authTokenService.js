@@ -1,6 +1,9 @@
 import jwt from 'jsonwebtoken';
 
 const DEFAULT_EXPIRES_IN = '1d';
+export const AUTH_COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'billbot_auth';
+const LEGACY_AUTH_COOKIE_NAME = 'token';
+const JWT_ALGORITHM = 'HS256';
 
 function parseDurationMs(value = DEFAULT_EXPIRES_IN) {
   const match = String(value).trim().match(/^(\d+)([smhd])$/i);
@@ -30,20 +33,50 @@ export function getJwtExpiresIn() {
   return process.env.JWT_EXPIRES_IN || DEFAULT_EXPIRES_IN;
 }
 
+export function getJwtIssuer() {
+  return process.env.JWT_ISSUER || 'billbot-legal';
+}
+
+export function getJwtAudience() {
+  return process.env.JWT_AUDIENCE || 'billbot-frontend';
+}
+
+export function getJwtVerifyOptions() {
+  return {
+    algorithms: [JWT_ALGORITHM],
+    issuer: getJwtIssuer(),
+    audience: getJwtAudience(),
+    clockTolerance: Number(process.env.JWT_CLOCK_TOLERANCE_SECONDS || 5),
+  };
+}
+
 export function signAuthToken(user) {
   return jwt.sign(
     { id: user._id.toString(), role: user.role, email: user.email },
     getJwtSecret(),
-    { expiresIn: getJwtExpiresIn() }
+    {
+      algorithm: JWT_ALGORITHM,
+      expiresIn: getJwtExpiresIn(),
+      issuer: getJwtIssuer(),
+      audience: getJwtAudience(),
+    }
   );
+}
+
+export function verifyAuthToken(token) {
+  return jwt.verify(token, getJwtSecret(), getJwtVerifyOptions());
 }
 
 export function getAuthCookieOptions() {
   const isProduction = process.env.NODE_ENV === 'production';
+  const sameSite = process.env.AUTH_COOKIE_SAMESITE || (isProduction ? 'none' : 'lax');
+  const secure = process.env.AUTH_COOKIE_SECURE
+    ? process.env.AUTH_COOKIE_SECURE === 'true'
+    : isProduction || String(sameSite).toLowerCase() === 'none';
   const options = {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: process.env.AUTH_COOKIE_SAMESITE || (isProduction ? 'none' : 'lax'),
+    secure,
+    sameSite,
     path: '/',
     maxAge: parseDurationMs(getJwtExpiresIn()),
   };
@@ -56,10 +89,22 @@ export function getAuthCookieOptions() {
 }
 
 export function setAuthCookie(res, token) {
-  res.cookie('token', token, getAuthCookieOptions());
+  const options = getAuthCookieOptions();
+  const { maxAge, ...clearOptions } = options;
+  res.cookie(AUTH_COOKIE_NAME, token, options);
+  if (AUTH_COOKIE_NAME !== LEGACY_AUTH_COOKIE_NAME) {
+    res.clearCookie(LEGACY_AUTH_COOKIE_NAME, clearOptions);
+  }
 }
 
 export function clearAuthCookie(res) {
   const { maxAge, ...options } = getAuthCookieOptions();
-  res.clearCookie('token', options);
+  res.clearCookie(AUTH_COOKIE_NAME, options);
+  if (AUTH_COOKIE_NAME !== LEGACY_AUTH_COOKIE_NAME) {
+    res.clearCookie(LEGACY_AUTH_COOKIE_NAME, options);
+  }
+}
+
+export function getAuthTokenFromRequest(req) {
+  return req.cookies?.[AUTH_COOKIE_NAME] || req.cookies?.[LEGACY_AUTH_COOKIE_NAME];
 }

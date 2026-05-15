@@ -11,6 +11,7 @@ vi.mock('../modules/users/models/User.js', () => ({
 }));
 
 const { default: app } = await import('../app.js');
+const { AUTH_COOKIE_NAME } = await import('../modules/auth/services/authTokenService.js');
 
 let server;
 let baseUrl;
@@ -61,7 +62,7 @@ test('POST /api/auth/login returns the user and auth cookie for valid credential
   const body = await response.json();
 
   expect(response.status).toBe(200);
-  expect(response.headers.get('set-cookie')).toContain('token=');
+  expect(response.headers.get('set-cookie')).toContain(`${AUTH_COOKIE_NAME}=`);
   expect(findOne).toHaveBeenCalledWith({
     name: 'Asha Partner',
     mobile: '9876543210',
