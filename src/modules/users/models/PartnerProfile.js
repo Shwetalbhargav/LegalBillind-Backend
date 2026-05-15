@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 
 const PartnerProfileSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  photoUrl: { type: String, default: '/images/default-user.jpg' },
   title: String,                      // e.g. Managing Partner
   specialization: { type: [String], default: [] },             // Arbitration, Corporate Law
   experienceYears: Number,

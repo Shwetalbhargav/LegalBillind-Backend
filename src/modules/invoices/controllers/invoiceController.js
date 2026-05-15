@@ -37,14 +37,15 @@ export const getInvoiceById = async (req, res) => {
 
 /**
  * GET /api/invoices
- * Filters: clientId, caseId, status, from, to
+ * Filters: clientId, caseId, status, userId, from, to
  */
 export const getAllInvoices = async (req, res) => {
   try {
-    const { clientId, caseId, status, from, to } = req.query;
+    const { clientId, caseId, status, userId, from, to } = req.query;
     const filter = {};
     if (clientId) filter.clientId = clientId;
     if (caseId) filter.caseId = caseId;
+    if (userId) filter.createdBy = userId;
     if (status) filter.status = status;
     if (from || to) {
       filter.issueDate = {};

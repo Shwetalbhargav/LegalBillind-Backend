@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 
 const InternProfileSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  photoUrl: { type: String, default: '/images/default-user.jpg' },
   lawSchool: String,
   graduationYear: Number,
   mentor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

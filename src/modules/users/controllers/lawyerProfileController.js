@@ -15,7 +15,7 @@ const isValidId = (id) => mongoose.isValidObjectId(id);
  */
 export const createLawyerProfile = async (req, res) => {
   try {
-    const { userId, specialization, experienceYears, landmarkCases, achievements } = req.body;
+    const { userId, photoUrl, specialization, experienceYears, landmarkCases, achievements } = req.body;
 
     if (!isValidId(userId)) return res.status(400).json({ error: "Invalid userId" });
 
@@ -23,7 +23,7 @@ export const createLawyerProfile = async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
     if (user.role !== "lawyer") return res.status(400).json({ error: "User is not a lawyer" });
 
-    const profile = new LawyerProfile({ userId, specialization, experienceYears, landmarkCases, achievements });
+    const profile = new LawyerProfile({ userId, photoUrl, specialization, experienceYears, landmarkCases, achievements });
     await profile.save();
     res.status(201).json({ success: true, profile });
   } catch (err) {

@@ -25,6 +25,7 @@ const EmailEntrySchema = new mongoose.Schema(
     rate: { type: Number },
 
     source: { type: String, enum: ['gmail', 'extension'], default: 'extension' },
+    meta: { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   { timestamps: true }
 );

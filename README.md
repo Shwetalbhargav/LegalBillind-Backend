@@ -31,6 +31,10 @@ npm start
 
 The application will start on http://localhost:5000
 
+## Database Schema
+
+The MongoDB/Mongoose schema is documented in [docs/database-schema.md](docs/database-schema.md).
+
 ## Clio API Integration
 
 This application integrates with Clio's API to:

@@ -3,21 +3,87 @@ import mongoose from 'mongoose';
 
 import Billable from '../../billables/models/Billable.js';
 import {Invoice} from '../../invoices/models/Invoice.js';
-import {Client} from '../../clients/models/Client.js';
-import User from '../../users/models/User.js';
+
+const objectId = (value) => (
+  mongoose.Types.ObjectId.isValid(String(value)) ? new mongoose.Types.ObjectId(value) : null
+);
+
+const dateMatch = (field, query) => {
+  const range = {};
+  if (query.from) range.$gte = new Date(query.from);
+  if (query.to) range.$lte = new Date(query.to);
+  return Object.keys(range).length ? { [field]: range } : {};
+};
+
+const billedMatch = { $or: [{ status: 'Logged' }, { pushedAt: { $ne: null } }, { externalEntryId: { $nin: [null, ''] } }] };
+const unbilledMatch = { $and: [{ status: { $ne: 'Logged' } }, { pushedAt: null }, { externalEntryId: { $in: [null, ''] } }] };
+const loggedExpression = {
+  $or: [
+    { $eq: ['$status', 'Logged'] },
+    { $ne: ['$pushedAt', null] },
+    { $and: [{ $ne: ['$externalEntryId', null] }, { $ne: ['$externalEntryId', ''] }] },
+  ],
+};
+
+function applyEntityFilters(match, query) {
+  const clientId = query.clientId ? objectId(query.clientId) : null;
+  const caseId = query.caseId ? objectId(query.caseId) : null;
+  const userId = query.userId ? objectId(query.userId) : null;
+  if (query.clientId && !clientId) return false;
+  if (query.caseId && !caseId) return false;
+  if (query.userId && !userId) return false;
+  if (clientId) match.clientId = clientId;
+  if (caseId) match.caseId = caseId;
+  if (userId) match.userId = userId;
+  return true;
+}
 
 export const getBillableStats = async (req, res) => {
   try {
+    const match = { ...dateMatch('date', req.query) };
+    if (!applyEntityFilters(match, req.query)) return res.status(400).json({ error: 'Invalid id filter' });
+
     const data = await Billable.aggregate([
+      { $match: match },
       {
         $group: {
-          _id: '$category',
-          totalHours: { $sum: '$durationHours' },
-          totalValue: { $sum: '$amount' }
+          _id: { $ifNull: ['$category', 'Uncategorized'] },
+          totalMinutes: { $sum: { $ifNull: ['$durationMinutes', 0] } },
+          totalHours: { $sum: { $divide: [{ $ifNull: ['$durationMinutes', 0] }, 60] } },
+          totalValue: { $sum: { $ifNull: ['$amount', 0] } },
+          entries: { $sum: 1 },
+          loggedEntries: {
+            $sum: {
+              $cond: [
+                loggedExpression,
+                1,
+                0,
+              ],
+            },
+          },
         }
-      }
+      },
+      {
+        $project: {
+          category: '$_id',
+          totalMinutes: 1,
+          totalHours: 1,
+          totalValue: 1,
+          entries: 1,
+          loggedPct: {
+            $cond: [{ $gt: ['$entries', 0] }, { $multiply: [{ $divide: ['$loggedEntries', '$entries'] }, 100] }, 0],
+          },
+        }
+      },
+      { $sort: { totalValue: -1 } }
     ]);
-    res.json({ summaryByCategory: data });
+    const totals = data.reduce((acc, row) => ({
+      entries: acc.entries + row.entries,
+      totalMinutes: acc.totalMinutes + row.totalMinutes,
+      totalHours: acc.totalHours + row.totalHours,
+      totalValue: acc.totalValue + row.totalValue,
+    }), { entries: 0, totalMinutes: 0, totalHours: 0, totalValue: 0 });
+    res.json({ summaryByCategory: data, totals });
   } catch (err) {
     res.status(500).json({ error: 'Failed to compute billable stats' });
   }
@@ -25,16 +91,34 @@ export const getBillableStats = async (req, res) => {
 
 export const getInvoiceStats = async (req, res) => {
   try {
+    const match = { ...dateMatch('issueDate', req.query) };
+    const clientId = req.query.clientId ? objectId(req.query.clientId) : null;
+    const caseId = req.query.caseId ? objectId(req.query.caseId) : null;
+    if ((req.query.clientId && !clientId) || (req.query.caseId && !caseId)) {
+      return res.status(400).json({ error: 'Invalid id filter' });
+    }
+    if (clientId) match.clientId = clientId;
+    if (caseId) match.caseId = caseId;
+
     const data = await Invoice.aggregate([
+      { $match: match },
       {
         $group: {
           _id: '$status',
-          totalRevenue: { $sum: '$totalAmount' },
+          totalRevenue: { $sum: { $ifNull: ['$total', 0] } },
+          subtotal: { $sum: { $ifNull: ['$subtotal', 0] } },
+          tax: { $sum: { $ifNull: ['$tax', 0] } },
           count: { $sum: 1 }
         }
       }
     ]);
-    res.json({ invoices: data });
+    const totals = data.reduce((acc, row) => ({
+      count: acc.count + row.count,
+      subtotal: acc.subtotal + row.subtotal,
+      tax: acc.tax + row.tax,
+      totalRevenue: acc.totalRevenue + row.totalRevenue,
+    }), { count: 0, subtotal: 0, tax: 0, totalRevenue: 0 });
+    res.json({ invoices: data, totals });
   } catch (err) {
     res.status(500).json({ error: 'Failed to compute invoice stats' });
   }
@@ -42,8 +126,20 @@ export const getInvoiceStats = async (req, res) => {
 
 export const getUnbilledBillables = async (req, res) => {
   try {
-    const unbilled = await Billable.find({ synced: false });
-    res.json({ count: unbilled.length, entries: unbilled });
+    const match = { ...unbilledMatch, ...dateMatch('date', req.query) };
+    if (!applyEntityFilters(match, req.query)) return res.status(400).json({ error: 'Invalid id filter' });
+    const unbilled = await Billable.find(match)
+      .populate('clientId', 'displayName name')
+      .populate('caseId', 'title name case_type')
+      .populate('userId', 'name email role')
+      .sort({ date: -1 });
+    const totals = unbilled.reduce((acc, entry) => ({
+      count: acc.count + 1,
+      totalMinutes: acc.totalMinutes + (entry.durationMinutes || 0),
+      totalHours: acc.totalHours + ((entry.durationMinutes || 0) / 60),
+      totalValue: acc.totalValue + (entry.amount || 0),
+    }), { count: 0, totalMinutes: 0, totalHours: 0, totalValue: 0 });
+    res.json({ count: unbilled.length, totals, entries: unbilled });
   } catch (err) {
     res.status(500).json({ error: 'Failed to get unbilled entries' });
   }
@@ -51,18 +147,41 @@ export const getUnbilledBillables = async (req, res) => {
 
 export const getBillableStatsByCaseType = async (req, res) => {
   try {
+    const match = { ...dateMatch('date', req.query) };
+    if (!applyEntityFilters(match, req.query)) return res.status(400).json({ error: 'Invalid id filter' });
     const pipeline = [
+      { $match: match },
       { $lookup: { from: 'cases', localField: 'caseId', foreignField: '_id', as: 'case' } },
-      { $unwind: '$case' },
-      // Optional filter: only a specific case type
+      { $unwind: { path: '$case', preserveNullAndEmptyArrays: true } },
       ...(req.query.caseType ? [{ $match: { 'case.case_type': req.query.caseType } }] : []),
-      ...(req.query.caseTypeId ? [{ $match: { 'case.case_type_id': new mongoose.Types.ObjectId(req.query.caseTypeId) } }] : []),
+      ...(req.query.caseTypeId && objectId(req.query.caseTypeId) ? [{ $match: { 'case.case_type_id': objectId(req.query.caseTypeId) } }] : []),
       {
         $group: {
-          _id: '$case.case_type',
-          totalHours: { $sum: { $divide: ['$durationMinutes', 60] } },
-          totalValue: { $sum: '$amount' },
-          entries: { $sum: 1 }
+          _id: { $ifNull: ['$case.case_type', 'Unclassified'] },
+          totalHours: { $sum: { $divide: [{ $ifNull: ['$durationMinutes', 0] }, 60] } },
+          totalValue: { $sum: { $ifNull: ['$amount', 0] } },
+          entries: { $sum: 1 },
+          loggedEntries: {
+            $sum: {
+              $cond: [
+                loggedExpression,
+                1,
+                0,
+              ],
+            },
+          },
+        }
+      },
+      {
+        $project: {
+          caseType: '$_id',
+          totalHours: 1,
+          totalValue: 1,
+          entries: 1,
+          avgRate: { $cond: [{ $gt: ['$totalHours', 0] }, { $divide: ['$totalValue', '$totalHours'] }, 0] },
+          loggedPct: {
+            $cond: [{ $gt: ['$entries', 0] }, { $multiply: [{ $divide: ['$loggedEntries', '$entries'] }, 100] }, 0],
+          },
         }
       },
       { $sort: { totalValue: -1 } }
@@ -76,20 +195,16 @@ export const getBillableStatsByCaseType = async (req, res) => {
 
 export const getUnbilledStatsByClient = async (req, res) => {
   try {
-    const matchStage = { synced: false };
-
-    // Optional filter for a single client
-    if (req.query.clientId) {
-      matchStage.clientId = new mongoose.Types.ObjectId(req.query.clientId);
-    }
+    const matchStage = { ...unbilledMatch, ...dateMatch('date', req.query) };
+    if (!applyEntityFilters(matchStage, req.query)) return res.status(400).json({ error: 'Invalid id filter' });
 
     const pipeline = [
       { $match: matchStage },
       {
         $group: {
           _id: '$clientId',
-          totalUnbilledHours: { $sum: { $divide: ['$durationMinutes', 60] } },
-          totalUnbilledValue: { $sum: '$amount' },
+          totalUnbilledHours: { $sum: { $divide: [{ $ifNull: ['$durationMinutes', 0] }, 60] } },
+          totalUnbilledValue: { $sum: { $ifNull: ['$amount', 0] } },
           entries: { $sum: 1 },
         },
       },
@@ -124,20 +239,16 @@ export const getUnbilledStatsByClient = async (req, res) => {
 };
 export const getUnbilledStatsByUser = async (req, res) => {
   try {
-    const matchStage = { synced: false };
-
-    // Optional filter for a single user/lawyer
-    if (req.query.userId) {
-      matchStage.userId = new mongoose.Types.ObjectId(req.query.userId);
-    }
+    const matchStage = { ...unbilledMatch, ...dateMatch('date', req.query) };
+    if (!applyEntityFilters(matchStage, req.query)) return res.status(400).json({ error: 'Invalid id filter' });
 
     const pipeline = [
       { $match: matchStage },
       {
         $group: {
           _id: '$userId',
-          totalUnbilledHours: { $sum: { $divide: ['$durationMinutes', 60] } },
-          totalUnbilledValue: { $sum: '$amount' },
+          totalUnbilledHours: { $sum: { $divide: [{ $ifNull: ['$durationMinutes', 0] }, 60] } },
+          totalUnbilledValue: { $sum: { $ifNull: ['$amount', 0] } },
           entries: { $sum: 1 },
         },
       },
@@ -174,20 +285,16 @@ export const getUnbilledStatsByUser = async (req, res) => {
 // Billed stats grouped by client (who has how much already billed)
 export const getBilledStatsByClient = async (req, res) => {
   try {
-    const matchStage = { synced: true }; // <-- change this if your "billed" flag is different
-
-    // Optional filter for a single client
-    if (req.query.clientId) {
-      matchStage.clientId = new mongoose.Types.ObjectId(req.query.clientId);
-    }
+    const matchStage = { ...billedMatch, ...dateMatch('date', req.query) };
+    if (!applyEntityFilters(matchStage, req.query)) return res.status(400).json({ error: 'Invalid id filter' });
 
     const pipeline = [
       { $match: matchStage },
       {
         $group: {
           _id: '$clientId',
-          totalHours: { $sum: '$durationHours' },
-          totalValue: { $sum: '$amount' },
+          totalHours: { $sum: { $divide: [{ $ifNull: ['$durationMinutes', 0] }, 60] } },
+          totalValue: { $sum: { $ifNull: ['$amount', 0] } },
           entries: { $sum: 1 },
         },
       },
@@ -223,20 +330,16 @@ export const getBilledStatsByClient = async (req, res) => {
 // Billed stats grouped by user/lawyer (who has billed how much)
 export const getBilledStatsByUser = async (req, res) => {
   try {
-    const matchStage = { synced: true }; // <-- same note: adjust to your "billed" criteria
-
-    // Optional filter for a single user
-    if (req.query.userId) {
-      matchStage.userId = new mongoose.Types.ObjectId(req.query.userId);
-    }
+    const matchStage = { ...billedMatch, ...dateMatch('date', req.query) };
+    if (!applyEntityFilters(matchStage, req.query)) return res.status(400).json({ error: 'Invalid id filter' });
 
     const pipeline = [
       { $match: matchStage },
       {
         $group: {
           _id: '$userId',
-          totalHours: { $sum: '$durationHours' },
-          totalValue: { $sum: '$amount' },
+          totalHours: { $sum: { $divide: [{ $ifNull: ['$durationMinutes', 0] }, 60] } },
+          totalValue: { $sum: { $ifNull: ['$amount', 0] } },
           entries: { $sum: 1 },
         },
       },

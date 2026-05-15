@@ -1,5 +1,7 @@
 import axios from 'axios';
+import jwt from 'jsonwebtoken';
 import ZohoConnection from '../models/ZohoConnection.js';
+import { getJwtSecret } from '../../auth/services/authTokenService.js';
 
 const DEFAULT_SCOPES = [
   'ZohoCRM.modules.ALL',
@@ -16,7 +18,26 @@ export function getZohoConfig() {
   };
 }
 
-export function buildZohoAuthUrl(state) {
+export function encodeZohoState(userId) {
+  return jwt.sign(
+    {
+      sub: String(userId),
+      purpose: 'zoho_oauth',
+    },
+    getJwtSecret(),
+    { expiresIn: '15m' }
+  );
+}
+
+export function decodeZohoState(state) {
+  const decoded = jwt.verify(String(state || ''), getJwtSecret());
+  if (decoded.purpose !== 'zoho_oauth' || !decoded.sub) {
+    throw new Error('Invalid Zoho OAuth state');
+  }
+  return decoded.sub;
+}
+
+export function buildZohoAuthUrl(userId) {
   const { clientId, redirectUri, accountsServer, scopes } = getZohoConfig();
   const params = new URLSearchParams({
     scope: scopes,
@@ -24,7 +45,7 @@ export function buildZohoAuthUrl(state) {
     response_type: 'code',
     access_type: 'offline',
     redirect_uri: redirectUri,
-    state,
+    state: encodeZohoState(userId),
     prompt: 'consent',
   });
   return `${accountsServer}/oauth/v2/auth?${params.toString()}`;
