@@ -31,6 +31,15 @@ const TimeEntrySchema = new mongoose.Schema(
 );
 
 TimeEntrySchema.index({ clientId: 1, caseId: 1, date: -1 });
+TimeEntrySchema.index(
+  { activityId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      activityId: { $exists: true },
+    },
+  }
+);
 
 export const TimeEntry = mongoose.model('TimeEntry', TimeEntrySchema);
 export default TimeEntry;

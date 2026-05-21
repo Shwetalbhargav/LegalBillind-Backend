@@ -34,7 +34,10 @@ const CaseAssignmentSchema = new Schema(
 );
 
 // indexes
-CaseAssignmentSchema.index({ caseId: 1, userId: 1 }, { unique: true });
+CaseAssignmentSchema.index(
+  { caseId: 1, userId: 1, status: 1 },
+  { unique: true, partialFilterExpression: { status: 'active' } }
+);
 CaseAssignmentSchema.index({ firmId: 1, clientId: 1, status: 1 });
 CaseAssignmentSchema.index({ caseId: 1, status: 1 });
 

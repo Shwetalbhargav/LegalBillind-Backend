@@ -15,6 +15,7 @@ const { AUTH_COOKIE_NAME } = await import('../modules/auth/services/authTokenSer
 
 let server;
 let baseUrl;
+const FIRM_ID = '507f1f77bcf86cd799439012';
 
 beforeAll(async () => {
   server = createServer(app);
@@ -41,6 +42,7 @@ test('POST /api/auth/login returns the user and auth cookie for valid credential
     email: 'asha@example.com',
     mobile: '9876543210',
     role: 'partner',
+    firmId: FIRM_ID,
     address: 'Mumbai',
     qualifications: [{ degree: 'LLB', university: 'Mumbai University', year: 2015 }],
     passwordHash,
@@ -56,6 +58,7 @@ test('POST /api/auth/login returns the user and auth cookie for valid credential
       mobile: '9876543210',
       password: 'correct-password',
       role: 'partner',
+      firmId: FIRM_ID,
     }),
   });
 
@@ -67,6 +70,7 @@ test('POST /api/auth/login returns the user and auth cookie for valid credential
     name: 'Asha Partner',
     mobile: '9876543210',
     role: 'partner',
+    firmId: FIRM_ID,
   });
   expect(body).toMatchObject({
     success: true,
@@ -89,6 +93,7 @@ test('POST /api/auth/login rejects requests missing a required field', async () 
       name: 'Asha Partner',
       mobile: '9876543210',
       role: 'partner',
+      firmId: FIRM_ID,
     }),
   });
 

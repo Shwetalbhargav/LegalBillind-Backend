@@ -4,8 +4,23 @@ import { TimeEntry } from '../models/TimeEntry.js';
 import { Activity } from '../../activities/models/Activity.js';
 import { RateCard } from '../../rates/models/RateCard.js';
 
+const withSession = (query, session) =>
+  session && query && typeof query.session === 'function' ? query.session(session) : query;
+
+const idString = (value) => {
+  if (value === undefined || value === null) return '';
+  return String(value._id || value);
+};
+
+const buildAuditEntry = ({ action, actorId, changes }) => ({
+  action,
+  actorId,
+  at: new Date(),
+  ...(changes ? { changes } : {}),
+});
+
 /** Resolve an hourly rate at a timestamp using RateCard precedence */
-async function resolveRate({ userId, caseId, activityCode, at }) {
+async function resolveRate({ userId, caseId, activityCode, at, session }) {
   const ts = at ? new Date(at) : new Date();
   const windowMatch = {
     effectiveFrom: { $lte: ts },
@@ -22,7 +37,7 @@ async function resolveRate({ userId, caseId, activityCode, at }) {
     if (userId) q.userId = new mongoose.Types.ObjectId(userId);
     if (combo.caseId) q.caseId = new mongoose.Types.ObjectId(combo.caseId);
     if (combo.activityCode) q.activityCode = combo.activityCode;
-    const hit = await RateCard.findOne(q).sort({ effectiveFrom: -1 });
+    const hit = await withSession(RateCard.findOne(q).sort({ effectiveFrom: -1 }), session);
     if (hit) return hit.ratePerHour;
   }
   return null;
@@ -90,38 +105,108 @@ export const createTimeEntry = async (req, res) => {
  * Creates a TimeEntry from an Activity (uses activity.durationMinutes as billableMinutes if present).
  */
 export const createFromActivity = async (req, res) => {
+  let session;
   try {
     const { activityId } = req.params;
-    const act = await Activity.findById(activityId);
-    if (!act) return res.status(404).json({ error: 'Activity not found' });
+    session = await mongoose.startSession();
+    let entry;
 
-    const rate = await resolveRate({
-      userId: act.userId,
-      caseId: act.caseId,
-      activityCode: act.activityCode,
-      at: act.endedAt || act.startedAt || new Date(),
-    });
+    await session.withTransaction(async () => {
+      const act = await withSession(Activity.findById(activityId), session);
+      if (!act) {
+        const error = new Error('Activity not found');
+        error.statusCode = 404;
+        throw error;
+      }
 
-    const billableMinutes = act.durationMinutes ?? 0;
-    const entry = await TimeEntry.create({
-      caseId: act.caseId,
-      clientId: act.clientId,
-      userId: act.userId,
-      activityId: act._id,
-      activityCode: act.activityCode,
-      narrative: act.narrative || act.activityType,
-      billableMinutes,
-      nonbillableMinutes: 0,
-      rateApplied: rate || undefined,
-      amount: computeAmount({ rateApplied: rate, billableMinutes }),
-      date: act.endedAt || act.startedAt || new Date(),
-      status: 'draft',
+      if (req.user?.role !== 'admin' && idString(act.userId) !== req.user?.id) {
+        const error = new Error('You can only convert your own activities');
+        error.statusCode = 403;
+        throw error;
+      }
+
+      if (act.conversionStatus === 'converted' || act.convertedTimeEntryId) {
+        const error = new Error('Activity has already been converted to a time entry');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      if (['ignored', 'locked', 'voided'].includes(act.status)) {
+        const error = new Error(`Activity cannot be converted while ${act.status}`);
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const existing = await withSession(TimeEntry.findOne({ activityId: act._id }), session);
+      if (existing) {
+        const error = new Error('Activity has already been converted to a time entry');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      const rate = await resolveRate({
+        userId: act.userId,
+        caseId: act.caseId,
+        activityCode: act.activityCode,
+        at: act.endedAt || act.startedAt || new Date(),
+        session,
+      });
+
+      const activityMinutes = act.roundedDurationMinutes ?? act.durationMinutes ?? 0;
+      const billableMinutes = act.billable === false ? 0 : activityMinutes;
+      const nonbillableMinutes = act.billable === false ? activityMinutes : 0;
+      const [created] = await TimeEntry.create([{
+        caseId: act.caseId,
+        clientId: act.clientId,
+        userId: act.userId,
+        activityId: act._id,
+        activityCode: act.activityCode,
+        narrative: act.narrative || act.activityType,
+        billableMinutes,
+        nonbillableMinutes,
+        rateApplied: rate || undefined,
+        amount: computeAmount({ rateApplied: rate, billableMinutes }),
+        date: act.endedAt || act.startedAt || new Date(),
+        status: 'draft',
+      }], { session });
+
+      entry = created;
+
+      await Activity.updateOne(
+        { _id: act._id },
+        {
+          $set: {
+            conversionStatus: 'converted',
+            status: 'converted',
+            convertedTimeEntryId: entry._id,
+            convertedAt: new Date(),
+            updatedBy: req.user.id,
+          },
+          $push: {
+            auditTrail: buildAuditEntry({
+              action: 'converted',
+              actorId: req.user.id,
+              changes: {
+                convertedTimeEntryId: entry._id,
+                status: { from: act.status, to: 'converted' },
+              },
+            }),
+          },
+        },
+        { session }
+      );
     });
 
     res.status(201).json(entry);
   } catch (e) {
+    if (e?.code === 11000) {
+      return res.status(409).json({ error: 'Activity has already been converted to a time entry' });
+    }
+
     console.error(e);
-    res.status(500).json({ error: 'Failed to create entry from activity' });
+    res.status(e.statusCode || 500).json({ error: e.statusCode ? e.message : 'Failed to create entry from activity' });
+  } finally {
+    if (session) await session.endSession();
   }
 };
 

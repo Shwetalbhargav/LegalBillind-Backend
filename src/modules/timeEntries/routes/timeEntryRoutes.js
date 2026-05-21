@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate } from '../../../middleware/auth.js';
 import {
+  validateActivityIdParam,
   validateCreateTimeEntry,
   validateUpdateTimeEntry,
 } from '../validators/timeEntryValidators.js';
@@ -19,7 +20,7 @@ const router = Router();
 router.use(authenticate);
 
 router.post('/', validateCreateTimeEntry, createTimeEntry);
-router.post('/from-activity/:activityId', createFromActivity);
+router.post('/from-activity/:activityId', validateActivityIdParam, createFromActivity);
 router.get('/', listTimeEntries);
 router.patch('/:id', validateUpdateTimeEntry, updateTimeEntry);
 router.post('/:id/submit', submitTimeEntry);
