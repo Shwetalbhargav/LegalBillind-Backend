@@ -5,21 +5,18 @@ import Admin from '../models/admin.js';
 import LawyerProfile from '../models/LawyerProfile.js';
 import AssociateProfile from '../models/AssociateProfile.js';
 import PartnerProfile from '../models/PartnerProfile.js';
+import InternProfile from '../models/InternProfile.js';
+import { toSafeUser } from '../utils/safeUser.js';
 
 /**
  * Helpers
  */
-function pickSafeUser(u) {
-  const obj = u.toObject ? u.toObject() : u;
-  delete obj.passwordHash;
-  return obj;
-}
 function modelForRole(role) {
   switch (role) {
     case 'partner': return PartnerProfile;
     case 'lawyer': return LawyerProfile;
     case 'associate': return AssociateProfile;
-    // 'intern' profile not present in repo; return null and handle gracefully.
+    case 'intern': return InternProfile;
     default: return null;
   }
 }
@@ -35,7 +32,7 @@ export const createUser = async (req, res) => {
     }
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await User.create({ name, email, role, firmId, passwordHash, mobile, address, qualifications });
-    res.status(201).json({ success: true, user: pickSafeUser(user) });
+    res.status(201).json({ success: true, user: toSafeUser(user) });
   } catch (err) {
     console.error('createUser error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -55,7 +52,7 @@ export const updateUser = async (req, res) => {
     }
     const user = await User.findByIdAndUpdate(id, updates, { new: true, select: '-passwordHash' });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ success: true, user });
+    res.json({ success: true, user: toSafeUser(user) });
   } catch (err) {
     console.error('updateUser error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -129,7 +126,7 @@ export const getMe = async (req, res) => {
     const me = await User.findById(req.user.id, { passwordHash: 0 });
     if (!me) return res.status(404).json({ error: 'User not found' });
     const admin = await Admin.findOne({ userId: me._id });
-    res.json({ success: true, user: me, isAdmin: !!admin, adminRole: admin?.role || null });
+    res.json({ success: true, user: toSafeUser(me), isAdmin: !!admin, adminRole: admin?.role || null });
   } catch (err) {
     console.error('getMe error:', err);
     res.status(500).json({ error: 'Server error' });

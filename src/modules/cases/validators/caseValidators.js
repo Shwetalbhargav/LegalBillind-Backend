@@ -86,6 +86,13 @@ const dateOrder = () => (_value, _field, payload) => {
     : 'endAt must be greater than or equal to startAt';
 };
 
+const caseDateOrder = () => (_value, _field, payload) => {
+  if (!payload.openedAt || !payload.closedAt) return null;
+  return Date.parse(payload.openedAt) <= Date.parse(payload.closedAt)
+    ? null
+    : 'closedAt must be greater than or equal to openedAt';
+};
+
 const rejectUnknownFields = (allowedFields) => (req, res, next) => {
   const body = req.body || {};
   if (!isPlainObject(body)) {
@@ -187,6 +194,8 @@ export const validateListCasesQuery = validateQuery({
   clientId: [objectId()],
   status: [oneOf(caseStatuses)],
   q: [string({ max: 160 })],
+  page: [positiveIntQuery({ min: 1 })],
+  limit: [positiveIntQuery({ min: 1, max: 100 })],
 });
 
 export const validateRelatedCaseQuery = validateQuery({
@@ -217,7 +226,7 @@ export const validateCreateCase = validateBody({
   description: [string({ max: 4000 })],
   status: [oneOf(caseStatuses)],
   openedAt: [date()],
-  closedAt: [date()],
+  closedAt: [date(), caseDateOrder()],
   billingType: [oneOf(billingTypes)],
   leadPartnerId: [nullableObjectId()],
   managingLawyerId: [nullableObjectId()],
@@ -233,7 +242,7 @@ export const validateUpdateCase = validateBody({
   description: [string({ max: 4000 })],
   status: [oneOf(caseStatuses)],
   openedAt: [date()],
-  closedAt: [date()],
+  closedAt: [date(), caseDateOrder()],
   billingType: [oneOf(billingTypes)],
   leadPartnerId: [nullableObjectId()],
   managingLawyerId: [nullableObjectId()],

@@ -20,6 +20,11 @@ const TimeEntrySchema = new mongoose.Schema(
     date: { type: Date, default: () => new Date() },
 
     status: { type: String, enum: ['draft', 'submitted', 'approved', 'billed', 'paid', 'rejected'], default: 'draft', index: true },
+    submittedAt: { type: Date },
+    submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reviewedAt: { type: Date },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rejectionReason: { type: String },
 
     external: {
       system: { type: String },

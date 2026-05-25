@@ -1,5 +1,5 @@
 // middleware/auth.js
-import { getAuthTokenFromRequest, verifyAuthToken } from "../modules/auth/services/authTokenService.js";
+import { clearAuthCookie, getAuthTokenFromRequest, verifyAuthToken } from "../modules/auth/services/authTokenService.js";
 
 /**
  * Authenticate a request using a JWT supplied by the HTTP-only auth cookie.
@@ -18,6 +18,7 @@ export const authenticate = (req, res, next) => {
     req.user = { id: decoded.id, role: decoded.role, email: decoded.email };
     next();
   } catch (err) {
+    clearAuthCookie(res);
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 };

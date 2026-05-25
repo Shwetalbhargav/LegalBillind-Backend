@@ -214,6 +214,20 @@ export const CaseAssignmentController = {
     }
   },
 
+  // GET /case-assignments/:id
+  async getById(req, res) {
+    try {
+      const assignment = await CaseAssignment.findById(req.params.id)
+        .populate('caseId', 'title status')
+        .populate('userId', 'name role email');
+
+      if (!assignment) return notFound(res, 'Assignment not found');
+      res.json({ ok: true, data: assignment });
+    } catch (err) {
+      res.status(400).json({ ok: false, message: err.message });
+    }
+  },
+
   // GET /case-assignments/timeline/:caseId
   async staffingTimeline(req, res) {
     try {

@@ -41,7 +41,7 @@ router.post('/', canWriteCases, rejectUnknownCaseFields, normalizeCasePayload, v
 router.get('/', canReadCases, validateListCasesQuery, getAllCases);
 
 // Convenience
-router.get('/by-client/:clientId', canReadCases, validateClientIdParam, getCasesByClient);
+router.get('/by-client/:clientId', canReadCases, validateClientIdParam, validateListCasesQuery, getCasesByClient);
 
 router.get('/:caseId', canReadCases, validateCaseIdParam, getCaseById);
 router.put(

@@ -3,15 +3,17 @@ import bcrypt from 'bcryptjs';
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from 'vitest';
 
 const findOne = vi.fn();
+const findById = vi.fn();
 
 vi.mock('../modules/users/models/User.js', () => ({
   default: {
     findOne,
+    findById,
   },
 }));
 
 const { default: app } = await import('../app.js');
-const { AUTH_COOKIE_NAME } = await import('../modules/auth/services/authTokenService.js');
+const { AUTH_COOKIE_NAME, signAuthToken } = await import('../modules/auth/services/authTokenService.js');
 
 let server;
 let baseUrl;
@@ -32,6 +34,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   findOne.mockReset();
+  findById.mockReset();
 });
 
 test('POST /api/auth/login returns the user and auth cookie for valid credentials', async () => {
@@ -67,7 +70,6 @@ test('POST /api/auth/login returns the user and auth cookie for valid credential
   expect(response.status).toBe(200);
   expect(response.headers.get('set-cookie')).toContain(`${AUTH_COOKIE_NAME}=`);
   expect(findOne).toHaveBeenCalledWith({
-    name: 'Asha Partner',
     mobile: '9876543210',
     role: 'partner',
     firmId: FIRM_ID,
@@ -109,4 +111,48 @@ test('POST /api/auth/login rejects requests missing a required field', async () 
     field: 'password',
     message: 'password is required',
   });
+});
+
+test('GET /api/auth/me returns the same safe user from the auth cookie', async () => {
+  const user = {
+    _id: '507f1f77bcf86cd799439011',
+    name: 'Asha Partner',
+    email: 'asha@example.com',
+    mobile: '9876543210',
+    role: 'partner',
+    firmId: FIRM_ID,
+    photoUrl: '/images/default-user.jpg',
+    address: 'Mumbai',
+    qualifications: [{ degree: 'LLB', university: 'Mumbai University', year: 2015 }],
+    passwordHash: 'hidden',
+  };
+  const token = signAuthToken(user);
+
+  findById.mockResolvedValue(user);
+
+  const response = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: {
+      cookie: `${AUTH_COOKIE_NAME}=${token}`,
+    },
+  });
+
+  const body = await response.json();
+
+  expect(response.status).toBe(200);
+  expect(findById).toHaveBeenCalledWith(user._id);
+  expect(body).toMatchObject({
+    success: true,
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      mobile: user.mobile,
+      role: user.role,
+      firmId: FIRM_ID,
+      photoUrl: user.photoUrl,
+      address: user.address,
+      qualifications: user.qualifications,
+    },
+  });
+  expect(body.user.passwordHash).toBeUndefined();
 });

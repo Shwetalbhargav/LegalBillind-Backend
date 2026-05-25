@@ -4,18 +4,13 @@ import bcrypt from "bcryptjs";
 import User from "../models/User.js";
 import Admin from "../models/admin.js";
 import { clearAuthCookie, setAuthCookie, signAuthToken } from "../../auth/services/authTokenService.js";
+import { toSafeUser } from "../utils/safeUser.js";
 
 function normName(s) { return (s || "").trim().replace(/\s+/g, " ").toLowerCase(); }
 
 function roleMeta(name) {
   const displayName = name || "there";
   return { welcomeMessage: `Welcome Admin ${displayName}!`, dashboardPath: "/admin/dashboard" };
-}
-
-function toSafeUser(u) {
-  if (!u) return null;
-  const { _id, name, email, role, firmId, mobile, createdAt, updatedAt } = u;
-  return { id: _id, name, email, role, firmId, mobile, createdAt, updatedAt };
 }
 
 function toSafeAdminProfile(a) {

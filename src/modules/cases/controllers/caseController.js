@@ -26,6 +26,8 @@ const CASE_MUTABLE_FIELDS = [
 ];
 
 const USER_REFERENCE_FIELDS = ['leadPartnerId', 'managingLawyerId', 'primaryLawyerId'];
+const DEFAULT_LIMIT = 25;
+const MAX_LIMIT = 100;
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
@@ -42,12 +44,40 @@ const validationFailed = (res, errors) =>
     errors,
   });
 
+const conflict = (res, message, errors = []) =>
+  res.status(409).json({
+    ok: false,
+    message,
+    ...(errors.length ? { errors } : {}),
+  });
+
 const notFound = (res, message) => res.status(404).json({ ok: false, message });
 
 const asObjectId = (id) => {
   try { return new mongoose.Types.ObjectId(id); } catch { return null; }
 };
 const toNumber = (v, d = 0) => (v === undefined || v === null || Number.isNaN(Number(v)) ? d : Number(v));
+const parsePositiveInt = (value, fallback, max = MAX_LIMIT) => {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
+};
+const getPagination = (query = {}) => {
+  const page = parsePositiveInt(query.page, 1, Number.MAX_SAFE_INTEGER);
+  const limit = parsePositiveInt(query.limit, DEFAULT_LIMIT);
+  return {
+    page,
+    limit,
+    skip: (page - 1) * limit,
+  };
+};
+const buildMeta = ({ page, limit }, total) => ({
+  page,
+  limit,
+  total,
+  totalPages: total ? Math.ceil(total / limit) : 0,
+});
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Compute amount for a time entry if not stored
 const computeTimeAmount = (te) => {
@@ -103,6 +133,40 @@ const validateCaseReferences = async (payload, res) => {
   return true;
 };
 
+const validateCaseDateOrder = ({ openedAt, closedAt }, res) => {
+  if (!openedAt || !closedAt) return true;
+
+  const opened = Date.parse(openedAt);
+  const closed = Date.parse(closedAt);
+  if (Number.isNaN(opened) || Number.isNaN(closed) || opened <= closed) return true;
+
+  validationFailed(res, [{
+    field: 'closedAt',
+    message: 'closedAt must be greater than or equal to openedAt',
+  }]);
+  return false;
+};
+
+const ensureUniqueCaseTitle = async ({ clientId, title, excludeCaseId }, res) => {
+  if (!clientId || !title) return true;
+
+  const query = {
+    clientId,
+    title: new RegExp(`^${escapeRegex(String(title).trim())}$`, 'i'),
+    status: { $ne: 'archived' },
+  };
+  if (excludeCaseId) query._id = { $ne: excludeCaseId };
+
+  const existing = await Case.exists(query);
+  if (!existing) return true;
+
+  conflict(res, 'Case title already exists for this client', [{
+    field: 'title',
+    message: 'A non-archived case with this title already exists for this client',
+  }]);
+  return false;
+};
+
 const ensureClientExists = async (clientId, res) => {
   const exists = await Client.exists({ _id: clientId });
   if (!exists) {
@@ -149,8 +213,15 @@ export const createCase = async (req, res) => {
     const refsValid = await validateCaseReferences(payload, res);
     if (!refsValid) return;
 
+    const uniqueTitle = await ensureUniqueCaseTitle({
+      clientId: payload.clientId,
+      title: payload.title,
+    }, res);
+    if (!uniqueTitle) return;
+
     const lifecycle = applyStatusLifecycle(payload, res);
     if (!lifecycle) return;
+    if (!validateCaseDateOrder(lifecycle.payload, res)) return;
 
     const doc = await Case.create(lifecycle.payload);
     res.status(201).json({ ok: true, data: doc });
@@ -161,19 +232,26 @@ export const createCase = async (req, res) => {
 
 export const getAllCases = async (req, res) => {
   try {
+    const { page, limit, skip } = getPagination(req.query);
     const q = {};
     if (req.query.clientId) q.clientId = req.query.clientId;
     if (req.query.status) q.status = req.query.status;
     if (req.query.q) {
-      const pattern = new RegExp(req.query.q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      const pattern = new RegExp(escapeRegex(req.query.q), 'i');
       q.$or = [{ title: pattern }, { description: pattern }, { case_type: pattern }];
     }
 
-    const items = await Case.find(q)
-      .populate('clientId', 'displayName')
-      .populate('assignedUsers', 'name role')
-      .populate('primaryLawyerId', 'name');
-    res.json({ ok: true, data: items });
+    const [items, total] = await Promise.all([
+      Case.find(q)
+        .populate('clientId', 'displayName')
+        .populate('assignedUsers', 'name role')
+        .populate('primaryLawyerId', 'name')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Case.countDocuments(q),
+    ]);
+    res.json({ ok: true, data: items, meta: buildMeta({ page, limit }, total) });
   } catch (err) {
     res.status(500).json({ ok: false, message: 'Failed to fetch cases' });
   }
@@ -194,6 +272,9 @@ export const getCaseById = async (req, res) => {
 
 export const updateCase = async (req, res) => {
   try {
+    const existing = await Case.findById(req.params.caseId).select('clientId title openedAt closedAt');
+    if (!existing) return notFound(res, 'Case not found');
+
     const payload = pickCasePayload(req.body);
     const refsValid = await validateCaseReferences(payload, res);
     if (!refsValid) return;
@@ -201,9 +282,27 @@ export const updateCase = async (req, res) => {
     const lifecycle = applyStatusLifecycle(payload, res);
     if (!lifecycle) return;
 
+    const nextPayload = lifecycle.payload;
+    const nextClientId = hasOwn(nextPayload, 'clientId') ? nextPayload.clientId : existing.clientId;
+    const nextTitle = hasOwn(nextPayload, 'title') ? nextPayload.title : existing.title;
+    const uniqueTitle = await ensureUniqueCaseTitle({
+      clientId: nextClientId,
+      title: nextTitle,
+      excludeCaseId: req.params.caseId,
+    }, res);
+    if (!uniqueTitle) return;
+
+    const nextOpenedAt = hasOwn(nextPayload, 'openedAt') ? nextPayload.openedAt : existing.openedAt;
+    const nextClosedAt = lifecycle.clearClosedAt
+      ? null
+      : hasOwn(nextPayload, 'closedAt')
+        ? nextPayload.closedAt
+        : existing.closedAt;
+    if (!validateCaseDateOrder({ openedAt: nextOpenedAt, closedAt: nextClosedAt }, res)) return;
+
     const update = lifecycle.clearClosedAt
-      ? { $set: lifecycle.payload, $unset: { closedAt: '' } }
-      : lifecycle.payload;
+      ? { $set: nextPayload, $unset: { closedAt: '' } }
+      : nextPayload;
 
     const updated = await Case.findByIdAndUpdate(req.params.caseId, update, {
       new: true,
@@ -389,8 +488,19 @@ export const getCasesByClient = async (req, res) => {
     const exists = await ensureClientExists(clientId, res);
     if (!exists) return;
 
-    const cases = await Case.find({ clientId }).sort({ createdAt: -1 });
-    res.json({ ok: true, data: cases });
+    const { page, limit, skip } = getPagination(req.query);
+    const q = { clientId };
+    if (req.query.status) q.status = req.query.status;
+    if (req.query.q) {
+      const pattern = new RegExp(escapeRegex(req.query.q), 'i');
+      q.$or = [{ title: pattern }, { description: pattern }, { case_type: pattern }];
+    }
+
+    const [cases, total] = await Promise.all([
+      Case.find(q).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Case.countDocuments(q),
+    ]);
+    res.json({ ok: true, data: cases, meta: buildMeta({ page, limit }, total) });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
   }

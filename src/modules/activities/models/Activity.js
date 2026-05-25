@@ -18,7 +18,7 @@ const ActivitySchema = new mongoose.Schema(
     billable: { type: Boolean, default: true, index: true },
     durationOverrideReason: { type: String },
 
-    source: { type: String, enum: ['gmail', 'extension', 'manual', 'integration', 'system'], default: 'extension' },
+    source: { type: String, enum: ['gmail', 'extension', 'research', 'manual', 'integration', 'system'], default: 'extension' },
     sourceRef: { type: String },
 
     narrative: { type: String },

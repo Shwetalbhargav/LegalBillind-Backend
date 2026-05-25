@@ -8,7 +8,7 @@
 		caseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Case' },
 		activityCode: { type: String },
 
-		ratePerHour: { type: Number, required: true, min: 0 },
+		ratePerHour: { type: Number, required: true, min: 0.01 },
 		effectiveFrom: { type: Date, required: true },
 		effectiveTo: { type: Date },
 	  },

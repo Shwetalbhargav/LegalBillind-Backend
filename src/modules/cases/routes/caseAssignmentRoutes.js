@@ -30,6 +30,7 @@ router.post(
 );
 router.get('/', canReadAssignments, validateAssignmentQuery, CaseAssignmentController.list);
 router.get('/timeline/:caseId', canReadAssignments, validateCaseIdParam, CaseAssignmentController.staffingTimeline);
+router.get('/:id', canReadAssignments, validateAssignmentIdParam, CaseAssignmentController.getById);
 router.put(
   '/:id',
   canWriteAssignments,

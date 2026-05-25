@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 
 const DEFAULT_EXPIRES_IN = '1d';
+const DEFAULT_EXTENSION_EXPIRES_IN = '15m';
 export const AUTH_COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'billbot_auth';
 const LEGACY_AUTH_COOKIE_NAME = 'token';
 const JWT_ALGORITHM = 'HS256';
@@ -41,26 +42,47 @@ export function getJwtAudience() {
   return process.env.JWT_AUDIENCE || 'billbot-frontend';
 }
 
+export function getExtensionJwtAudience() {
+  return process.env.EXTENSION_JWT_AUDIENCE || 'billbot-extension';
+}
+
 export function getJwtVerifyOptions() {
   return {
     algorithms: [JWT_ALGORITHM],
     issuer: getJwtIssuer(),
-    audience: getJwtAudience(),
+    audience: [getJwtAudience(), getExtensionJwtAudience()],
     clockTolerance: Number(process.env.JWT_CLOCK_TOLERANCE_SECONDS || 5),
   };
 }
 
-export function signAuthToken(user) {
+export function signAuthToken(user, options = {}) {
   return jwt.sign(
-    { id: user._id.toString(), role: user.role, email: user.email },
+    {
+      id: user._id.toString(),
+      role: user.role,
+      email: user.email,
+      ...(options.purpose ? { purpose: options.purpose } : {}),
+    },
     getJwtSecret(),
     {
       algorithm: JWT_ALGORITHM,
-      expiresIn: getJwtExpiresIn(),
+      expiresIn: options.expiresIn || getJwtExpiresIn(),
       issuer: getJwtIssuer(),
-      audience: getJwtAudience(),
+      audience: options.audience || getJwtAudience(),
     }
   );
+}
+
+export function getExtensionJwtExpiresIn() {
+  return process.env.EXTENSION_JWT_EXPIRES_IN || DEFAULT_EXTENSION_EXPIRES_IN;
+}
+
+export function signExtensionToken(user) {
+  return signAuthToken(user, {
+    audience: getExtensionJwtAudience(),
+    expiresIn: getExtensionJwtExpiresIn(),
+    purpose: 'chrome_extension_capture',
+  });
 }
 
 export function verifyAuthToken(token) {
@@ -106,5 +128,7 @@ export function clearAuthCookie(res) {
 }
 
 export function getAuthTokenFromRequest(req) {
-  return req.cookies?.[AUTH_COOKIE_NAME] || req.cookies?.[LEGACY_AUTH_COOKIE_NAME];
+  const authorization = req.get?.('authorization') || '';
+  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
+  return bearer || req.cookies?.[AUTH_COOKIE_NAME] || req.cookies?.[LEGACY_AUTH_COOKIE_NAME];
 }

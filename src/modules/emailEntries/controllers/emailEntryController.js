@@ -1,4 +1,3 @@
-// src/controllers/emailEntryController.js
 import mongoose from 'mongoose';
 import { EmailEntry } from '../models/EmailEntry.js';
 import { Activity } from '../../activities/models/Activity.js';
@@ -9,180 +8,455 @@ import { Client } from '../../clients/models/Client.js';
 import User from '../../users/models/User.js';
 import { generateBillableSummary } from '../../ai/services/gptService.js';
 import { ensureCaseInZoho, ensureClientInZoho } from '../../integrations/services/zohoCrmService.js';
+import {
+  convertEmailEntryToBillingRecords,
+  ensureActivityForCapture,
+  runEmailEntryTransaction,
+} from '../services/emailEntryConversionService.js';
 
-// ---------- helpers ----------
-const oid = (v) => (mongoose.Types.ObjectId.isValid(String(v)) ? new mongoose.Types.ObjectId(v) : null);
-const minutes = (m) => Math.max(Number(m || 0), 0);
-const cleanStr = (s, d='') => (typeof s === 'string' ? s : d);
-const EMAIL_CATEGORY = 'Email drafting/review';
+const SOURCE_VALUES = ['gmail', 'extension', 'research'];
+const BULK_LIMIT = 100;
 
-function roundToIncrement(mins, increment = 6) {
-  return Math.max(increment, Math.ceil(minutes(mins) / increment) * increment);
+const oid = (value) => (
+  mongoose.Types.ObjectId.isValid(String(value || ''))
+    ? new mongoose.Types.ObjectId(value)
+    : null
+);
+const cleanStr = (value, fallback = '') => (typeof value === 'string' ? value.trim() : fallback);
+const minutes = (value) => Math.max(Number(value || 0), 0);
+const withSession = (query, session) =>
+  session && query && typeof query.session === 'function' ? query.session(session) : query;
+
+function normalizeSource(value) {
+  const source = String(value || '').trim().toLowerCase();
+  return SOURCE_VALUES.includes(source) ? source : 'extension';
 }
 
-function getEmailMinutes(entry) {
-  if (entry.typingTimeMinutes != null) return minutes(entry.typingTimeMinutes);
-  return minutes(entry.typingTimeSeconds) / 60;
+function normalizeDomain({ domain, url }) {
+  const explicit = cleanStr(domain).toLowerCase().replace(/^www\./, '');
+  if (explicit) return explicit;
+  try {
+    return new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    return '';
+  }
 }
 
-async function ensureActivityForEmail(entry, { clientId, caseId }) {
-  if (oid(entry.meta?.activityId)) {
-    const existing = await Activity.findById(entry.meta.activityId);
-    if (existing) return existing;
+function getDurationMinutes(payload = {}) {
+  if (payload.typingTimeMinutes != null) return minutes(payload.typingTimeMinutes);
+  if (payload.durationMinutes != null) return minutes(payload.durationMinutes);
+  if (payload.minutes != null) return minutes(payload.minutes);
+  if (payload.typingTimeSeconds != null) return minutes(payload.typingTimeSeconds) / 60;
+  return 0;
+}
+
+function getEntryStatusForMapping(entry, { clientId, caseId }) {
+  if (entry?.status === 'converted' || entry?.status === 'billed') return entry.status;
+  return clientId && caseId ? 'mapped' : 'captured';
+}
+
+async function resolveCaptureUser(req, payload = {}, session) {
+  const requestedUserId = oid(payload.userId);
+  if (req.user?.id) {
+    if (requestedUserId && String(requestedUserId) !== String(req.user.id) && req.user.role !== 'admin') {
+      const error = new Error('Only admins can create email entries for another user');
+      error.statusCode = 403;
+      throw error;
+    }
+    return requestedUserId && req.user.role === 'admin' ? requestedUserId : oid(req.user.id);
   }
 
-  const activity = await Activity.findOne({
-    source: 'extension',
-    sourceRef: String(entry._id),
-    activityType: 'email',
-  });
-  if (activity) return activity;
-
-  return Activity.create({
-    userId: entry.userId,
-    clientId,
-    caseId,
-    activityType: 'email',
-    durationMinutes: getEmailMinutes(entry),
-    narrative: entry.billableSummary || `Email: ${entry.subject}`,
-    source: 'extension',
-    sourceRef: String(entry._id),
-    activityCode: 'EMAIL',
-  });
+  if (requestedUserId) return requestedUserId;
+  const userEmail = cleanStr(payload.userEmail).toLowerCase();
+  if (!userEmail) {
+    const error = new Error('userId or userEmail is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  const user = await withSession(User.findOne({ email: userEmail }), session);
+  if (!user) {
+    const error = new Error('user not found for userEmail');
+    error.statusCode = 400;
+    throw error;
+  }
+  return user._id;
 }
 
-async function ensureTimeEntryForEmail(entry, { clientId, caseId, activityId, body }) {
-  if (oid(entry.meta?.timeEntryId)) {
-    const existing = await TimeEntry.findById(entry.meta.timeEntryId);
-    if (existing) return existing;
+async function resolveExplicitClientAndCase({ clientId, caseId }, session) {
+  let client = null;
+  let matter = null;
+
+  if (clientId) {
+    const clientObjectId = oid(clientId);
+    if (!clientObjectId) throw new Error('clientId must be a valid ObjectId');
+    client = await withSession(Client.findById(clientObjectId), session);
+    if (!client) throw new Error('Client not found');
   }
 
-  const existing = await TimeEntry.findOne({ activityId });
-  if (existing) return existing;
-
-  const billableMinutes = roundToIncrement(getEmailMinutes(entry));
-  const rateApplied = body.rateApplied ?? body.rate ?? entry.rate;
-  const amount = rateApplied != null ? Number((Number(rateApplied) * (billableMinutes / 60)).toFixed(2)) : undefined;
-
-  return TimeEntry.create({
-    userId: entry.userId,
-    clientId,
-    caseId,
-    activityId,
-    activityCode: 'EMAIL',
-    narrative: entry.billableSummary || `Email: ${entry.subject}`,
-    billableMinutes,
-    nonbillableMinutes: 0,
-    rateApplied: rateApplied ?? undefined,
-    amount,
-    date: body.date ? new Date(body.date) : entry.workDate || entry.createdAt || new Date(),
-    status: body.status || 'submitted',
-  });
-}
-
-async function ensureBillableForEmail(entry, { clientId, caseId, activityId, timeEntry }) {
-  if (oid(entry.meta?.billableId)) {
-    const existing = await Billable.findById(entry.meta.billableId);
-    if (existing) return existing;
+  if (caseId) {
+    const caseObjectId = oid(caseId);
+    if (!caseObjectId) throw new Error('caseId must be a valid ObjectId');
+    matter = await withSession(Case.findById(caseObjectId), session);
+    if (!matter) throw new Error('Matter not found');
   }
 
-  const existing = await Billable.findOne({ activityId });
-  if (existing) return existing;
+  if (matter && client && String(matter.clientId) !== String(client._id)) {
+    throw new Error('caseId does not belong to clientId');
+  }
 
-  const durationMinutes = roundToIncrement(timeEntry.billableMinutes || getEmailMinutes(entry));
-  const rate = Number(timeEntry.rateApplied ?? entry.rate ?? 0);
-  const amount = Number((rate * (durationMinutes / 60)).toFixed(2));
+  if (matter && !client) {
+    client = await withSession(Client.findById(matter.clientId), session);
+    if (!client) throw new Error('Matter client not found');
+  }
 
-  return Billable.create({
-    caseId,
-    clientId,
-    userId: entry.userId,
-    activityId,
-    subject: entry.subject,
-    activityCode: 'EMAIL',
-    category: EMAIL_CATEGORY,
-    description: entry.billableSummary || `Email: ${entry.subject}`,
-    durationMinutes,
-    rate,
-    amount,
-    date: timeEntry.date || entry.workDate || entry.createdAt || new Date(),
-    status: 'Pending',
-  });
+  return {
+    clientId: client?._id,
+    caseId: matter?._id,
+  };
 }
 
-// best-effort resolver to ensure we have client/case
-async function ensureClientAndCase({ clientId, caseId, recipient }) {
-  let client = clientId ? await Client.findById(clientId) : null;
-  if (!client && recipient) {
-    client = await Client.findOne({ email: recipient }) || await Client.findOne({ contactInfo: recipient });
-    if (!client) {
-      client = await Client.create({
-        displayName: (recipient.split('@')[0] || 'Client').replace(/[^\w\s-]/g, ' ').trim(),
-        email: recipient,
-        contactInfo: recipient
-      });
+async function buildNarrative(payload, { subject, body, source }) {
+  const explicit = cleanStr(payload.billableSummary);
+  if (explicit) return explicit;
+  if (source !== 'research' && body) {
+    try {
+      return await generateBillableSummary({ subject, body });
+    } catch {
+      // Fall through to a deterministic narrative.
     }
   }
-  if (!client) throw new Error('Unable to resolve client');
-
-  let cse = caseId ? await Case.findById(caseId) : null;
-  if (!cse) {
-    cse = await Case.findOne({ clientId: client._id, status: { $in: ['open','pending'] } }) ||
-          await Case.create({ clientId: client._id, title: 'General Matter', status: 'open' });
-  }
-  return { clientId: client._id, caseId: cse._id };
+  return source === 'research' ? `Research work: ${subject}` : `Email work: ${subject}`;
 }
+
+async function upsertEmailEntryFromPayload(req, payload = {}, { session } = {}) {
+  const userId = await resolveCaptureUser(req, payload, session);
+  const source = normalizeSource(payload.source);
+  const sourceRef = cleanStr(payload.sourceRef);
+  const mapping = await resolveExplicitClientAndCase({
+    clientId: payload.clientId || payload.mappedClientId,
+    caseId: payload.caseId || payload.mappedCaseId,
+  }, session);
+
+  const domain = normalizeDomain({ domain: payload.domain, url: payload.url });
+  const subject = cleanStr(
+    payload.subject,
+    source === 'research' ? 'Research capture' : '(no subject)'
+  );
+  const body = cleanStr(payload.body || payload.selectedText);
+  const durationMinutes = getDurationMinutes(payload);
+  const recipient = cleanStr(
+    payload.recipient,
+    source === 'research' ? domain || 'research' : ''
+  );
+
+  if (source !== 'research' && !recipient) {
+    const error = new Error('recipient is required for email capture');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (durationMinutes <= 0) {
+    const error = new Error('duration is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (sourceRef) {
+    const existing = await withSession(
+      EmailEntry.findOne({ userId, source, sourceRef }),
+      session
+    );
+    if (existing) {
+      const existingStatus = existing.status;
+      if (mapping.clientId) existing.clientId = mapping.clientId;
+      if (mapping.caseId) existing.caseId = mapping.caseId;
+      if (mapping.clientId && mapping.caseId && existing.status === 'captured') {
+        existing.status = 'mapped';
+        existing.mappedAt = existing.mappedAt || new Date();
+      }
+      existing.meta = {
+        ...(existing.meta || {}),
+        ...(payload.meta || {}),
+        idempotentReplayAt: new Date(),
+      };
+      await existing.save(session ? { session } : undefined);
+      return { entry: existing, idempotent: true, previousStatus: existingStatus };
+    }
+  }
+
+  const narrative = await buildNarrative(payload, { subject, body, source });
+  const workDate = payload.workDate ? new Date(payload.workDate) : new Date();
+  const status = mapping.clientId && mapping.caseId ? 'mapped' : 'captured';
+  const [entry] = await EmailEntry.create([{
+    userId,
+    userEmail: cleanStr(payload.userEmail || req.user?.email).toLowerCase(),
+    recipient,
+    subject,
+    body,
+    typingTimeMinutes: durationMinutes,
+    typingTimeSeconds: payload.typingTimeSeconds ?? Math.round(durationMinutes * 60),
+    typingTimeMinSec: cleanStr(payload.typingTimeMinSec),
+    clientId: mapping.clientId,
+    caseId: mapping.caseId,
+    mappedClientId: mapping.clientId,
+    mappedCaseId: mapping.caseId,
+    billableSummary: narrative,
+    workDate,
+    rate: payload.rate,
+    source,
+    sourceRef: sourceRef || undefined,
+    messageId: cleanStr(payload.messageId),
+    threadId: cleanStr(payload.threadId),
+    url: cleanStr(payload.url),
+    domain,
+    status,
+    mappedAt: status === 'mapped' ? new Date() : undefined,
+    schemaVersion: Number(payload.schemaVersion || payload.meta?.schemaVersion || 1),
+    meta: {
+      ...(payload.meta || {}),
+      captureSource: source,
+    },
+  }], session ? { session } : undefined);
+
+  return { entry, idempotent: false };
+}
+
+const populateEmailEntry = (query) => query
+  .populate('clientId', 'displayName name email')
+  .populate('caseId', 'title name status clientId')
+  .populate('userId', 'name email role');
+
+function buildOpsFilter(req) {
+  const filter = {};
+  if (req.user?.role !== 'admin') filter.userId = oid(req.user?.id);
+  if (req.query?.userId && req.user?.role === 'admin') filter.userId = oid(req.query.userId);
+  if (req.query?.source) filter.source = req.query.source;
+  if (req.query?.from || req.query?.to) {
+    filter.createdAt = {};
+    if (req.query.from) filter.createdAt.$gte = new Date(req.query.from);
+    if (req.query.to) filter.createdAt.$lte = new Date(req.query.to);
+  }
+  return filter;
+}
+
+export const getEmailEntryMetrics = async (req, res) => {
+  try {
+    const filter = buildOpsFilter(req);
+    const [
+      byStatus,
+      bySource,
+      idempotentReplays,
+      conversionFailures,
+      bulkFailures,
+      unmappedCount,
+      mappedUnconvertedCount,
+    ] = await Promise.all([
+      EmailEntry.aggregate([
+        { $match: filter },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ]),
+      EmailEntry.aggregate([
+        { $match: filter },
+        { $group: { _id: '$source', count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ]),
+      EmailEntry.countDocuments({ ...filter, 'meta.idempotentReplayAt': { $exists: true } }),
+      EmailEntry.countDocuments({ ...filter, status: 'mapped', clientId: { $exists: true }, caseId: { $exists: true } }),
+      EmailEntry.countDocuments({ ...filter, 'meta.bulkIngestFailed': true }),
+      EmailEntry.countDocuments({
+        ...filter,
+        status: 'captured',
+        $or: [{ clientId: { $exists: false } }, { caseId: { $exists: false } }],
+      }),
+      EmailEntry.countDocuments({
+        ...filter,
+        status: 'mapped',
+        $or: [
+          { 'meta.activityId': { $exists: false } },
+          { 'meta.timeEntryId': { $exists: false } },
+          { 'meta.billableId': { $exists: false } },
+        ],
+      }),
+    ]);
+
+    res.json({
+      ok: true,
+      data: {
+        byStatus,
+        bySource,
+        idempotentReplays,
+        conversionFailures,
+        bulkFailures,
+        reconciliation: {
+          capturedUnmapped: unmappedCount,
+          mappedUnconverted: mappedUnconvertedCount,
+        },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err.message });
+  }
+};
+
+export const reconcileEmailEntries = async (req, res) => {
+  try {
+    const filter = buildOpsFilter(req);
+    const limit = Math.min(Number(req.query.limit || 100), 500);
+
+    const [
+      capturedUnmapped,
+      mappedUnconverted,
+      convertedCandidates,
+      duplicateSourceRefs,
+    ] = await Promise.all([
+      EmailEntry.find({
+        ...filter,
+        status: 'captured',
+        $or: [{ clientId: { $exists: false } }, { caseId: { $exists: false } }],
+      }).limit(limit).select('_id subject source sourceRef status clientId caseId createdAt'),
+      EmailEntry.find({
+        ...filter,
+        status: 'mapped',
+        clientId: { $exists: true },
+        caseId: { $exists: true },
+        $or: [
+          { 'meta.activityId': { $exists: false } },
+          { 'meta.timeEntryId': { $exists: false } },
+          { 'meta.billableId': { $exists: false } },
+        ],
+      }).limit(limit).select('_id subject source sourceRef status clientId caseId meta createdAt'),
+      EmailEntry.find({
+        ...filter,
+        status: 'converted',
+      }).limit(limit).select('_id subject source sourceRef status clientId caseId meta createdAt'),
+      EmailEntry.aggregate([
+        { $match: { ...filter, sourceRef: { $exists: true, $type: 'string' } } },
+        { $group: { _id: { userId: '$userId', source: '$source', sourceRef: '$sourceRef' }, ids: { $push: '$_id' }, count: { $sum: 1 } } },
+        { $match: { count: { $gt: 1 } } },
+        { $limit: limit },
+      ]),
+    ]);
+
+    const convertedMissingLinks = [];
+    for (const entry of convertedCandidates) {
+      const [activity, timeEntry, billable] = await Promise.all([
+        entry.meta?.activityId ? Activity.exists({ _id: entry.meta.activityId }) : null,
+        entry.meta?.timeEntryId ? TimeEntry.exists({ _id: entry.meta.timeEntryId }) : null,
+        entry.meta?.billableId ? Billable.exists({ _id: entry.meta.billableId }) : null,
+      ]);
+      if (!activity || !timeEntry || !billable) {
+        convertedMissingLinks.push({
+          _id: entry._id,
+          subject: entry.subject,
+          source: entry.source,
+          sourceRef: entry.sourceRef,
+          missing: {
+            activity: !activity,
+            timeEntry: !timeEntry,
+            billable: !billable,
+          },
+        });
+      }
+    }
+
+    res.json({
+      ok: true,
+      data: {
+        capturedUnmapped,
+        mappedUnconverted,
+        convertedMissingLinks,
+        duplicateSourceRefs,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err.message });
+  }
+};
+
+export const repairEmailEntry = async (req, res) => {
+  try {
+    const result = await runEmailEntryTransaction(async (session) => {
+      const entry = await withSession(EmailEntry.findById(req.params.id), session);
+      if (!entry) {
+        const error = new Error('Not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (req.user?.role !== 'admin' && String(entry.userId) !== String(req.user?.id)) {
+        const error = new Error('You can only repair your own email entries');
+        error.statusCode = 403;
+        throw error;
+      }
+      if (!entry.clientId || !entry.caseId) {
+        const error = new Error('Email entry must be mapped before repair');
+        error.statusCode = 422;
+        throw error;
+      }
+      return convertEmailEntryToBillingRecords(entry, {
+        body: req.body || {},
+        actorId: req.user?.id,
+        session,
+      });
+    });
+
+    res.json({
+      ok: true,
+      data: result.entry,
+      activity: result.activity,
+      timeEntry: result.timeEntry,
+      billable: result.billable,
+    });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ ok: false, message: err.message });
+  }
+};
 
 // ---------- create / read / list ----------
 export const createEmailEntry = async (req, res) => {
   try {
-    let { userId, userEmail, recipient, subject, body, typingTimeMinutes, billableSummary } = req.body || {};
-    if (!recipient || !typingTimeMinutes) {
-      return res.status(400).json({ ok: false, message: 'recipient and typingTimeMinutes are required' });
-    }
-
-    // resolve user by id or email
-    if (!oid(userId)) {
-      if (!userEmail) return res.status(400).json({ ok: false, message: 'userId or userEmail is required' });
-      const u = await User.findOne({ email: String(userEmail).trim().toLowerCase() });
-      if (!u) return res.status(400).json({ ok: false, message: 'user not found for userEmail' });
-      userId = u._id;
-    }
-
-    const { clientId, caseId } = await ensureClientAndCase({ clientId: req.body.clientId, caseId: req.body.caseId, recipient });
-
-    // GPT narrative fallback
-    let narrative = cleanStr(billableSummary);
-    if (!narrative && body) {
-      try { narrative = await generateBillableSummary({ subject: cleanStr(subject,'(no subject)'), body }); }
-      catch { /* keep default below */ }
-    }
-    if (!narrative) narrative = `Email work: ${cleanStr(subject,'(no subject)')}`;
-
-    const entry = await EmailEntry.create({
-      userId,
-      userEmail,
-      clientId,
-      caseId,
-      recipient,
-      subject: cleanStr(subject,'(no subject)'),
-      body: cleanStr(body),
-      typingTimeMinutes: minutes(typingTimeMinutes),
-      billableSummary: narrative,
-      source: 'extension'
+    const result = await runEmailEntryTransaction(async (session) => {
+      const capture = await upsertEmailEntryFromPayload(req, req.body || {}, { session });
+      if (req.body?.autoConvert) {
+        const converted = await convertEmailEntryToBillingRecords(capture.entry, {
+          body: req.body || {},
+          actorId: req.user?.id,
+          session,
+        });
+        return { ...capture, ...converted };
+      }
+      return capture;
     });
 
-    res.status(201).json({ ok: true, data: entry });
+    res.status(result.idempotent ? 200 : 201).json({
+      ok: true,
+      data: result.entry,
+      idempotent: !!result.idempotent,
+      ...(result.activity ? { activity: result.activity } : {}),
+      ...(result.timeEntry ? { timeEntry: result.timeEntry } : {}),
+      ...(result.billable ? { billable: result.billable } : {}),
+    });
   } catch (err) {
+    if (err?.code === 11000 && req.body?.sourceRef) {
+      const source = normalizeSource(req.body.source);
+      const userId = req.user?.id;
+      const existing = userId
+        ? await EmailEntry.findOne({ userId, source, sourceRef: req.body.sourceRef })
+        : null;
+      if (existing) return res.json({ ok: true, data: existing, idempotent: true });
+    }
+
     console.error('[EmailEntry create]', err);
-    res.status(500).json({ ok: false, message: err.message || 'Server error' });
+    res.status(err.statusCode || 500).json({ ok: false, message: err.message || 'Server error' });
   }
 };
 
 export const getEmailEntryById = async (req, res) => {
   try {
-    const entry = await EmailEntry.findById(req.params.id);
+    const entry = await populateEmailEntry(EmailEntry.findById(req.params.id));
     if (!entry) return res.status(404).json({ ok: false, message: 'Not found' });
+    if (req.user?.role !== 'admin' && String(entry.userId?._id || entry.userId) !== String(req.user?.id)) {
+      return res.status(403).json({ ok: false, message: 'You can only access your own email entries' });
+    }
     res.json({ ok: true, data: entry });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
@@ -191,12 +465,23 @@ export const getEmailEntryById = async (req, res) => {
 
 export const listEmailEntries = async (req, res) => {
   try {
-    const { userId, userEmail, clientId, caseId, recipient, limit = 100, skip = 0 } = req.query;
+    const {
+      userId,
+      userEmail,
+      clientId,
+      caseId,
+      recipient,
+      source,
+      status,
+      domain,
+      limit = 100,
+      skip = 0,
+    } = req.query;
 
-    let resolvedUserId = oid(userId);
-    if (!resolvedUserId && userEmail) {
-      const u = await User.findOne({ email: String(userEmail).trim().toLowerCase() });
-      if (u) resolvedUserId = u._id;
+    let resolvedUserId = req.user?.role === 'admin' ? oid(userId) : oid(req.user?.id);
+    if (!resolvedUserId && req.user?.role === 'admin' && userEmail) {
+      const user = await User.findOne({ email: String(userEmail).trim().toLowerCase() });
+      if (user) resolvedUserId = user._id;
     }
 
     const q = {};
@@ -204,8 +489,16 @@ export const listEmailEntries = async (req, res) => {
     if (oid(clientId)) q.clientId = clientId;
     if (oid(caseId)) q.caseId = caseId;
     if (recipient) q.recipient = recipient;
+    if (source) q.source = source;
+    if (status) q.status = status;
+    if (domain) q.domain = String(domain).trim().toLowerCase().replace(/^www\./, '');
 
-    const data = await EmailEntry.find(q).sort({ createdAt: -1 }).skip(Number(skip)).limit(Math.min(Number(limit), 200));
+    const data = await populateEmailEntry(
+      EmailEntry.find(q)
+        .sort({ createdAt: -1 })
+        .skip(Number(skip))
+        .limit(Math.min(Number(limit), 200))
+    );
     res.json({ ok: true, data });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
@@ -215,23 +508,50 @@ export const listEmailEntries = async (req, res) => {
 // ---------- update / delete ----------
 export const updateEmailEntry = async (req, res) => {
   try {
-    const allowed = ['recipient','subject','body','typingTimeMinutes','billableSummary','clientId','caseId'];
-    const patch = {};
-    for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
-
-    if ('clientId' in patch || 'caseId' in patch || 'recipient' in patch) {
-      const { clientId, caseId } = await ensureClientAndCase({
-        clientId: patch.clientId ?? undefined,
-        caseId: patch.caseId ?? undefined,
-        recipient: patch.recipient ?? undefined
-      });
-      patch.clientId = clientId;
-      patch.caseId = caseId;
+    const entry = await EmailEntry.findById(req.params.id);
+    if (!entry) return res.status(404).json({ ok: false, message: 'Not found' });
+    if (req.user?.role !== 'admin' && String(entry.userId) !== String(req.user?.id)) {
+      return res.status(403).json({ ok: false, message: 'You can only update your own email entries' });
     }
 
-    const updated = await EmailEntry.findByIdAndUpdate(req.params.id, patch, { new: true });
-    if (!updated) return res.status(404).json({ ok: false, message: 'Not found' });
-    res.json({ ok: true, data: updated });
+    const allowed = [
+      'recipient',
+      'subject',
+      'body',
+      'typingTimeMinutes',
+      'typingTimeSeconds',
+      'typingTimeMinSec',
+      'billableSummary',
+      'clientId',
+      'caseId',
+      'sourceRef',
+      'messageId',
+      'threadId',
+      'url',
+      'domain',
+      'workDate',
+      'rate',
+      'meta',
+    ];
+    for (const field of allowed) {
+      if (field in req.body) entry[field] = req.body[field];
+    }
+
+    if ('clientId' in req.body || 'caseId' in req.body) {
+      const mapping = await resolveExplicitClientAndCase({
+        clientId: req.body.clientId ?? entry.clientId,
+        caseId: req.body.caseId ?? entry.caseId,
+      });
+      entry.clientId = mapping.clientId;
+      entry.caseId = mapping.caseId;
+      entry.mappedClientId = mapping.clientId;
+      entry.mappedCaseId = mapping.caseId;
+      entry.status = getEntryStatusForMapping(entry, mapping);
+      if (entry.status === 'mapped') entry.mappedAt = entry.mappedAt || new Date();
+    }
+
+    await entry.save();
+    res.json({ ok: true, data: entry });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
   }
@@ -239,8 +559,12 @@ export const updateEmailEntry = async (req, res) => {
 
 export const deleteEmailEntry = async (req, res) => {
   try {
-    const del = await EmailEntry.findByIdAndDelete(req.params.id);
-    if (!del) return res.status(404).json({ ok: false, message: 'Not found' });
+    const entry = await EmailEntry.findById(req.params.id);
+    if (!entry) return res.status(404).json({ ok: false, message: 'Not found' });
+    if (req.user?.role !== 'admin' && String(entry.userId) !== String(req.user?.id)) {
+      return res.status(403).json({ ok: false, message: 'You can only delete your own email entries' });
+    }
+    await entry.deleteOne();
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
@@ -250,26 +574,57 @@ export const deleteEmailEntry = async (req, res) => {
 // ---------- mapping to client/case ----------
 export const mapEmailEntry = async (req, res) => {
   try {
-    const { clientId, caseId } = req.body;
-    if (!oid(clientId) && !oid(caseId)) {
-      return res.status(400).json({ ok: false, message: 'clientId or caseId is required' });
-    }
-    const entry = await EmailEntry.findById(req.params.id);
-    if (!entry) return res.status(404).json({ ok: false, message: 'Not found' });
+    const result = await runEmailEntryTransaction(async (session) => {
+      const entry = await withSession(EmailEntry.findById(req.params.id), session);
+      if (!entry) {
+        const error = new Error('Not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (req.user?.role !== 'admin' && String(entry.userId) !== String(req.user?.id)) {
+        const error = new Error('You can only map your own email entries');
+        error.statusCode = 403;
+        throw error;
+      }
 
-    const resolved = await ensureClientAndCase({
-      clientId: clientId ?? entry.clientId,
-      caseId: caseId ?? entry.caseId,
-      recipient: entry.recipient
+      const mapping = await resolveExplicitClientAndCase({
+        clientId: req.body.clientId ?? entry.clientId,
+        caseId: req.body.caseId ?? entry.caseId,
+      }, session);
+      if (!mapping.clientId || !mapping.caseId) {
+        const error = new Error('clientId and caseId are required');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      entry.clientId = mapping.clientId;
+      entry.caseId = mapping.caseId;
+      entry.mappedClientId = mapping.clientId;
+      entry.mappedCaseId = mapping.caseId;
+      entry.status = getEntryStatusForMapping(entry, mapping);
+      entry.mappedAt = entry.mappedAt || new Date();
+      await entry.save(session ? { session } : undefined);
+
+      if (req.body.convert) {
+        return convertEmailEntryToBillingRecords(entry, {
+          body: req.body || {},
+          actorId: req.user?.id,
+          session,
+        });
+      }
+
+      return { entry };
     });
 
-    entry.clientId = resolved.clientId;
-    entry.caseId = resolved.caseId;
-    await entry.save();
-
-    res.json({ ok: true, data: entry });
+    res.json({
+      ok: true,
+      data: result.entry,
+      ...(result.activity ? { activity: result.activity } : {}),
+      ...(result.timeEntry ? { timeEntry: result.timeEntry } : {}),
+      ...(result.billable ? { billable: result.billable } : {}),
+    });
   } catch (err) {
-    res.status(400).json({ ok: false, message: err.message });
+    res.status(err.statusCode || 400).json({ ok: false, message: err.message });
   }
 };
 
@@ -278,10 +633,13 @@ export const generateNarrative = async (req, res) => {
   try {
     const entry = await EmailEntry.findById(req.params.id);
     if (!entry) return res.status(404).json({ ok: false, message: 'Not found' });
+    if (req.user?.role !== 'admin' && String(entry.userId) !== String(req.user?.id)) {
+      return res.status(403).json({ ok: false, message: 'You can only update your own email entries' });
+    }
 
     const narrative = await generateBillableSummary({
       subject: entry.subject || '(no subject)',
-      body: entry.body || ''
+      body: entry.body || '',
     });
 
     entry.billableSummary = narrative;
@@ -295,64 +653,65 @@ export const generateNarrative = async (req, res) => {
 // ---------- Activity creation ----------
 export const createActivityFromEmail = async (req, res) => {
   try {
-    const entry = await EmailEntry.findById(req.params.id);
-    if (!entry) return res.status(404).json({ ok: false, message: 'Not found' });
-
-    const { clientId, caseId } = await ensureClientAndCase({
-      clientId: entry.clientId,
-      caseId: entry.caseId,
-      recipient: entry.recipient
+    const result = await runEmailEntryTransaction(async (session) => {
+      const entry = await withSession(EmailEntry.findById(req.params.id), session);
+      if (!entry) {
+        const error = new Error('Not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (!entry.clientId || !entry.caseId) {
+        const error = new Error('Email entry must be mapped to a client and matter before activity creation');
+        error.statusCode = 422;
+        throw error;
+      }
+      const activity = await ensureActivityForCapture(entry, {
+        actorId: req.user?.id,
+        session,
+      });
+      entry.meta = { ...(entry.meta || {}), activityId: activity._id };
+      if (entry.status === 'captured') entry.status = 'mapped';
+      await entry.save(session ? { session } : undefined);
+      return { entry, activity };
     });
 
-    const activity = await ensureActivityForEmail(entry, { clientId, caseId });
-
-    // keep a backlink in meta
-    entry.meta = { ...(entry.meta || {}), activityId: activity._id };
-    await entry.save();
-
-    res.status(201).json({ ok: true, data: activity });
+    res.status(201).json({ ok: true, data: result.activity, entry: result.entry });
   } catch (err) {
-    res.status(500).json({ ok: false, message: err.message });
+    res.status(err.statusCode || 500).json({ ok: false, message: err.message });
   }
 };
 
-// ---------- TimeEntry creation ----------
+// ---------- TimeEntry + Billable conversion ----------
 export const createTimeEntryFromEmail = async (req, res) => {
   try {
-    const entry = await EmailEntry.findById(req.params.id);
-    if (!entry) return res.status(404).json({ ok: false, message: 'Not found' });
-
-    const { clientId, caseId } = await ensureClientAndCase({
-      clientId: entry.clientId,
-      caseId: entry.caseId,
-      recipient: entry.recipient
+    const result = await runEmailEntryTransaction(async (session) => {
+      const entry = await withSession(EmailEntry.findById(req.params.id), session);
+      if (!entry) {
+        const error = new Error('Not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (req.user?.role !== 'admin' && String(entry.userId) !== String(req.user?.id)) {
+        const error = new Error('You can only convert your own email entries');
+        error.statusCode = 403;
+        throw error;
+      }
+      return convertEmailEntryToBillingRecords(entry, {
+        body: req.body || {},
+        actorId: req.user?.id,
+        session,
+      });
     });
 
-    const activity = await ensureActivityForEmail(entry, { clientId, caseId });
-    const timeEntry = await ensureTimeEntryForEmail(entry, {
-      clientId,
-      caseId,
-      activityId: activity._id,
-      body: req.body || {},
+    res.status(201).json({
+      ok: true,
+      data: result.timeEntry,
+      entry: result.entry,
+      activity: result.activity,
+      billable: result.billable,
     });
-    const billable = await ensureBillableForEmail(entry, {
-      clientId,
-      caseId,
-      activityId: activity._id,
-      timeEntry,
-    });
-
-    entry.meta = {
-      ...(entry.meta || {}),
-      activityId: activity._id,
-      timeEntryId: timeEntry._id,
-      billableId: billable._id,
-    };
-    await entry.save();
-
-    res.status(201).json({ ok: true, data: timeEntry, activity, billable });
   } catch (err) {
-    res.status(500).json({ ok: false, message: err.message });
+    res.status(err.statusCode || 500).json({ ok: false, message: err.message });
   }
 };
 
@@ -361,6 +720,9 @@ export const syncEmailEntryToZoho = async (req, res) => {
   try {
     const entry = await EmailEntry.findById(req.params.id);
     if (!entry) return res.status(404).json({ ok: false, message: 'Not found' });
+    if (req.user?.role !== 'admin' && String(entry.userId) !== String(req.user?.id)) {
+      return res.status(403).json({ ok: false, message: 'You can only sync your own email entries' });
+    }
 
     const client = await Client.findById(entry.clientId);
     const matter = await Case.findById(entry.caseId);
@@ -393,6 +755,22 @@ export const syncEmailEntryToZoho = async (req, res) => {
   }
 };
 
+function validateBulkEntry(payload, index) {
+  const errors = [];
+  const source = normalizeSource(payload.source);
+  if (!payload.subject) errors.push(`entries[${index}].subject is required`);
+  if (source !== 'research' && !payload.recipient) errors.push(`entries[${index}].recipient is required`);
+  if (getDurationMinutes(payload) <= 0) errors.push(`entries[${index}].duration is required`);
+  if (!payload.sourceRef) errors.push(`entries[${index}].sourceRef is required for idempotent bulk ingest`);
+  if (payload.meta !== undefined && (payload.meta === null || typeof payload.meta !== 'object' || Array.isArray(payload.meta))) {
+    errors.push(`entries[${index}].meta must be an object`);
+  }
+  if (payload.autoConvert && (!payload.clientId || !payload.caseId)) {
+    errors.push(`entries[${index}].autoConvert requires clientId and caseId`);
+  }
+  return errors;
+}
+
 // ---------- optional: bulk ingest from extension ----------
 export const bulkIngest = async (req, res) => {
   try {
@@ -400,34 +778,56 @@ export const bulkIngest = async (req, res) => {
     if (!Array.isArray(entries) || entries.length === 0) {
       return res.status(400).json({ ok: false, message: 'entries[] is required' });
     }
+    if (entries.length > BULK_LIMIT) {
+      return res.status(400).json({ ok: false, message: `entries[] cannot exceed ${BULK_LIMIT}` });
+    }
 
     const results = [];
-    for (const e of entries) {
-      try {
-        const { clientId, caseId } = await ensureClientAndCase({ clientId: e.clientId, caseId: e.caseId, recipient: e.recipient });
-        const u =
-          oid(e.userId) ? await User.findById(e.userId) :
-          (e.userEmail ? await User.findOne({ email: String(e.userEmail).trim().toLowerCase() }) : null);
-        if (!u) throw new Error('user not found');
+    for (let index = 0; index < entries.length; index += 1) {
+      const payload = entries[index] || {};
+      const validationErrors = validateBulkEntry(payload, index);
+      if (validationErrors.length) {
+        results.push({ ok: false, index, errors: validationErrors });
+        continue;
+      }
 
-        const doc = await EmailEntry.create({
-          userId: u._id,
-          userEmail: e.userEmail,
-          clientId,
-          caseId,
-          recipient: e.recipient,
-          subject: cleanStr(e.subject,'(no subject)'),
-          body: cleanStr(e.body),
-          typingTimeMinutes: minutes(e.typingTimeMinutes),
-          billableSummary: cleanStr(e.billableSummary),
-          source: 'extension'
+      try {
+        const result = await runEmailEntryTransaction(async (session) => {
+          const capture = await upsertEmailEntryFromPayload(req, payload, { session });
+          if (payload.autoConvert) {
+            const converted = await convertEmailEntryToBillingRecords(capture.entry, {
+              body: payload,
+              actorId: req.user?.id,
+              session,
+            });
+            return { ...capture, ...converted };
+          }
+          return capture;
         });
-        results.push({ ok: true, id: doc._id });
+        results.push({
+          ok: true,
+          index,
+          id: result.entry._id,
+          status: result.entry.status,
+          idempotent: !!result.idempotent,
+          activityId: result.activity?._id,
+          timeEntryId: result.timeEntry?._id,
+          billableId: result.billable?._id,
+        });
       } catch (err) {
-        results.push({ ok: false, error: err.message });
+        results.push({ ok: false, index, error: err.message });
       }
     }
-    res.status(207).json({ ok: true, results });
+
+    res.status(207).json({
+      ok: true,
+      results,
+      summary: {
+        total: results.length,
+        succeeded: results.filter((row) => row.ok).length,
+        failed: results.filter((row) => !row.ok).length,
+      },
+    });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
   }

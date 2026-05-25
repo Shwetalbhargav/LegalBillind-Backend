@@ -2,7 +2,7 @@
 import mongoose from 'mongoose';
 import { TimeEntry } from '../models/TimeEntry.js';
 import { Activity } from '../../activities/models/Activity.js';
-import { RateCard } from '../../rates/models/RateCard.js';
+import { computeRatedAmount, resolveBillingRate } from '../../rates/services/rateResolver.js';
 
 const withSession = (query, session) =>
   session && query && typeof query.session === 'function' ? query.session(session) : query;
@@ -19,37 +19,41 @@ const buildAuditEntry = ({ action, actorId, changes }) => ({
   ...(changes ? { changes } : {}),
 });
 
-/** Resolve an hourly rate at a timestamp using RateCard precedence */
-async function resolveRate({ userId, caseId, activityCode, at, session }) {
-  const ts = at ? new Date(at) : new Date();
-  const windowMatch = {
-    effectiveFrom: { $lte: ts },
-    $or: [{ effectiveTo: null }, { effectiveTo: { $gte: ts } }],
-  };
-  const combos = [
-    { userId, caseId, activityCode },
-    { userId, caseId },
-    { userId, activityCode },
-    { userId },
-  ];
-  for (const combo of combos) {
-    const q = { ...windowMatch };
-    if (userId) q.userId = new mongoose.Types.ObjectId(userId);
-    if (combo.caseId) q.caseId = new mongoose.Types.ObjectId(combo.caseId);
-    if (combo.activityCode) q.activityCode = combo.activityCode;
-    const hit = await withSession(RateCard.findOne(q).sort({ effectiveFrom: -1 }), session);
-    if (hit) return hit.ratePerHour;
+const isReviewerRole = (role) => ['admin', 'partner'].includes(String(role || '').toLowerCase());
+
+const canOwnTimeEntry = (entry, req) =>
+  req.user?.role === 'admin' || idString(entry?.userId) === req.user?.id;
+
+const assertOwnTimeEntry = (entry, req, res) => {
+  if (canOwnTimeEntry(entry, req)) return true;
+  res.status(403).json({ error: 'You can only change your own time entries' });
+  return false;
+};
+
+const assertRequestedTimeUser = (requestedUserId, req, res) => {
+  if (!req.user?.id) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return false;
+  }
+  if (req.user?.role === 'admin') return true;
+  if (String(requestedUserId) === req.user.id) return true;
+  res.status(403).json({ error: 'Only admins can create time for another user' });
+  return false;
+};
+
+const validateSubmittableEntry = (entry) => {
+  if (!String(entry?.narrative || '').trim()) {
+    return 'Narrative is required before submit';
+  }
+  const totalMinutes = Number(entry?.billableMinutes || 0) + Number(entry?.nonbillableMinutes || 0);
+  if (totalMinutes <= 0) {
+    return 'Time entry must have billable or nonbillable minutes';
+  }
+  if (Number(entry?.billableMinutes || 0) > 0 && !Number(entry?.rateApplied || 0)) {
+    return 'No hourly rate is available. Add a manual rate or create a matching rate card before submit';
   }
   return null;
-}
-
-/** Compute amount: prefer provided amount, else rate * (billableMinutes/60) */
-function computeAmount({ amount, rateApplied, billableMinutes }) {
-  if (amount != null) return Number(amount);
-  const rate = Number(rateApplied || 0);
-  const hours = Number(billableMinutes || 0) / 60;
-  return Number((rate * hours).toFixed(2));
-}
+};
 
 /**
  * POST /api/time-entries
@@ -68,6 +72,7 @@ export const createTimeEntry = async (req, res) => {
     if (!caseId || !clientId || !userId || !narrative) {
       return res.status(400).json({ error: 'caseId, clientId, userId, narrative are required' });
     }
+    if (!assertRequestedTimeUser(userId, req, res)) return;
 
     let finalActivityCode = activityCode;
     if (!finalActivityCode && activityId) {
@@ -77,7 +82,13 @@ export const createTimeEntry = async (req, res) => {
 
     let finalRate = rateApplied;
     if (finalRate == null) {
-      finalRate = await resolveRate({ userId, caseId, activityCode: finalActivityCode, at: date });
+      const resolved = await resolveBillingRate({
+        userId,
+        caseId,
+        activityCode: finalActivityCode,
+        at: date,
+      });
+      finalRate = resolved.ratePerHour;
     }
 
     const entry = await TimeEntry.create({
@@ -87,8 +98,8 @@ export const createTimeEntry = async (req, res) => {
       narrative,
       billableMinutes,
       nonbillableMinutes,
-      rateApplied: finalRate || undefined,
-      amount: computeAmount({ amount, rateApplied: finalRate, billableMinutes }),
+      rateApplied: finalRate == null ? undefined : Number(finalRate),
+      amount: computeRatedAmount({ amount, ratePerHour: finalRate, billableMinutes }),
       date: date ? new Date(date) : new Date(),
       status: 'draft',
     });
@@ -144,13 +155,14 @@ export const createFromActivity = async (req, res) => {
         throw error;
       }
 
-      const rate = await resolveRate({
+      const resolvedRate = await resolveBillingRate({
         userId: act.userId,
         caseId: act.caseId,
         activityCode: act.activityCode,
         at: act.endedAt || act.startedAt || new Date(),
         session,
       });
+      const rate = resolvedRate.ratePerHour;
 
       const activityMinutes = act.roundedDurationMinutes ?? act.durationMinutes ?? 0;
       const billableMinutes = act.billable === false ? 0 : activityMinutes;
@@ -164,8 +176,8 @@ export const createFromActivity = async (req, res) => {
         narrative: act.narrative || act.activityType,
         billableMinutes,
         nonbillableMinutes,
-        rateApplied: rate || undefined,
-        amount: computeAmount({ rateApplied: rate, billableMinutes }),
+        rateApplied: rate == null ? undefined : Number(rate),
+        amount: computeRatedAmount({ ratePerHour: rate, billableMinutes }),
         date: act.endedAt || act.startedAt || new Date(),
         status: 'draft',
       }], { session });
@@ -218,7 +230,14 @@ export const listTimeEntries = async (req, res) => {
   try {
     const { userId, clientId, caseId, status, from, to, q } = req.query;
     const filter = {};
-    if (userId) filter.userId = userId;
+    if (req.user?.role === 'admin' || req.user?.role === 'partner') {
+      if (userId) filter.userId = userId;
+    } else {
+      if (userId && userId !== req.user?.id) {
+        return res.status(403).json({ error: 'You can only list your own time entries' });
+      }
+      filter.userId = req.user?.id;
+    }
     if (clientId) filter.clientId = clientId;
     if (caseId) filter.caseId = caseId;
     if (status) filter.status = status;
@@ -246,16 +265,27 @@ export const updateTimeEntry = async (req, res) => {
     const { id } = req.params;
     const entry = await TimeEntry.findById(id);
     if (!entry) return res.status(404).json({ error: 'Time entry not found' });
-    if (!['draft', 'submitted'].includes(entry.status)) {
+    if (!assertOwnTimeEntry(entry, req, res)) return;
+    if (!['draft', 'submitted', 'rejected'].includes(entry.status)) {
       return res.status(400).json({ error: 'Entry cannot be edited in its current status' });
     }
 
     const patch = { ...req.body };
+    const touchesFrozenRate = patch.rateApplied != null || patch.amount != null;
+    if (touchesFrozenRate && req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can change a frozen billing rate or amount' });
+    }
+    if (entry.status === 'rejected') {
+      patch.status = 'draft';
+      patch.rejectionReason = undefined;
+      patch.reviewedAt = undefined;
+      patch.reviewedBy = undefined;
+    }
     // If billableMinutes, rateApplied, or amount change, recompute amount unless explicitly provided
     if ((patch.billableMinutes != null || patch.rateApplied != null) && patch.amount == null) {
       const rate = patch.rateApplied != null ? patch.rateApplied : entry.rateApplied;
       const minutes = patch.billableMinutes != null ? patch.billableMinutes : entry.billableMinutes;
-      patch.amount = computeAmount({ rateApplied: rate, billableMinutes: minutes });
+      patch.amount = computeRatedAmount({ ratePerHour: rate, billableMinutes: minutes });
     }
 
     const updated = await TimeEntry.findByIdAndUpdate(id, patch, { new: true });
@@ -269,10 +299,38 @@ export const updateTimeEntry = async (req, res) => {
 /**
  * Workflow transitions
  */
-async function transition(id, fromStatuses, toStatus) {
+async function transition(id, fromStatuses, toStatus, req, { reason } = {}) {
   const entry = await TimeEntry.findById(id);
   if (!entry) return { error: 'Time entry not found' };
   if (!fromStatuses.includes(entry.status)) return { error: `Entry must be in ${fromStatuses.join('/')} to ${toStatus}` };
+  if (toStatus === 'submitted') {
+    if (!canOwnTimeEntry(entry, req)) {
+      return { error: 'You can only change your own time entries', statusCode: 403 };
+    }
+    const validationError = validateSubmittableEntry(entry);
+    if (validationError) return { error: validationError, statusCode: 400 };
+    entry.submittedAt = new Date();
+    entry.submittedBy = req.user.id;
+  }
+  if (['approved', 'rejected'].includes(toStatus)) {
+    if (!isReviewerRole(req.user?.role)) {
+      return { error: 'Only reviewers can approve or reject time entries', statusCode: 403 };
+    }
+    if (idString(entry.userId) === req.user?.id) {
+      return { error: 'Reviewers cannot approve or reject their own time entries', statusCode: 403 };
+    }
+    entry.reviewedAt = new Date();
+    entry.reviewedBy = req.user.id;
+  }
+  if (toStatus === 'approved') {
+    entry.rejectionReason = undefined;
+  }
+  if (toStatus === 'rejected') {
+    const trimmedReason = String(reason || '').trim();
+    if (!trimmedReason) return { error: 'Rejection reason is required', statusCode: 400 };
+    if (trimmedReason.length > 500) return { error: 'Rejection reason must be at most 500 characters', statusCode: 400 };
+    entry.rejectionReason = trimmedReason;
+  }
   entry.status = toStatus;
   await entry.save();
   return { entry };
@@ -281,8 +339,8 @@ async function transition(id, fromStatuses, toStatus) {
 // POST /api/time-entries/:id/submit
 export const submitTimeEntry = async (req, res) => {
   try {
-    const result = await transition(req.params.id, ['draft'], 'submitted');
-    if (result.error) return res.status(400).json({ error: result.error });
+    const result = await transition(req.params.id, ['draft'], 'submitted', req);
+    if (result.error) return res.status(result.statusCode || 400).json({ error: result.error });
     res.json(result.entry);
   } catch (e) {
     console.error(e);
@@ -293,8 +351,8 @@ export const submitTimeEntry = async (req, res) => {
 // POST /api/time-entries/:id/approve
 export const approveTimeEntry = async (req, res) => {
   try {
-    const result = await transition(req.params.id, ['submitted'], 'approved');
-    if (result.error) return res.status(400).json({ error: result.error });
+    const result = await transition(req.params.id, ['submitted'], 'approved', req);
+    if (result.error) return res.status(result.statusCode || 400).json({ error: result.error });
     res.json(result.entry);
   } catch (e) {
     console.error(e);
@@ -305,8 +363,10 @@ export const approveTimeEntry = async (req, res) => {
 // POST /api/time-entries/:id/reject
 export const rejectTimeEntry = async (req, res) => {
   try {
-    const result = await transition(req.params.id, ['submitted', 'approved'], 'rejected');
-    if (result.error) return res.status(400).json({ error: result.error });
+    const result = await transition(req.params.id, ['submitted'], 'rejected', req, {
+      reason: req.body?.reason,
+    });
+    if (result.error) return res.status(result.statusCode || 400).json({ error: result.error });
     res.json(result.entry);
   } catch (e) {
     console.error(e);

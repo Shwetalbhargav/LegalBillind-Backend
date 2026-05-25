@@ -1,7 +1,7 @@
 import { boolean, date, number, objectId, oneOf, required, string, validateBody, validateParams, validateQuery } from '../../../middleware/validate.js';
 
 const activityTypes = ['email', 'drafting', 'review', 'meeting', 'hearing', 'research', 'call', 'other'];
-const activitySources = ['gmail', 'extension', 'manual', 'integration', 'system'];
+const activitySources = ['gmail', 'extension', 'research', 'manual', 'integration', 'system'];
 const activityStatuses = ['captured', 'reviewed', 'converted', 'ignored', 'locked', 'voided'];
 const roundingPolicies = ['exact', 'six_minute', 'fifteen_minute'];
 const activitySortFields = [

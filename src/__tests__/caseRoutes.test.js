@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   caseFindByIdAndUpdate: vi.fn(),
   caseFindByIdAndDelete: vi.fn(),
   caseUpdateOne: vi.fn(),
+  caseExists: vi.fn(),
+  caseCountDocuments: vi.fn(),
   clientExists: vi.fn(),
   userExists: vi.fn(),
   userFindById: vi.fn(),
@@ -34,6 +36,8 @@ vi.mock('../modules/cases/models/Case.js', () => {
     findByIdAndUpdate: mocks.caseFindByIdAndUpdate,
     findByIdAndDelete: mocks.caseFindByIdAndDelete,
     updateOne: mocks.caseUpdateOne,
+    exists: mocks.caseExists,
+    countDocuments: mocks.caseCountDocuments,
   };
   return { Case, default: Case };
 });
@@ -142,10 +146,18 @@ beforeEach(() => {
   mocks.userFindById.mockResolvedValue({ _id: USER_ID, role: 'lawyer' });
   mocks.caseCreate.mockImplementation(async (payload) => ({ _id: CASE_ID, ...payload }));
   mocks.caseFind.mockReturnValue(queryResult([]));
-  mocks.caseFindById.mockReturnValue(queryResult({ _id: CASE_ID, title: 'Matter' }));
+  mocks.caseFindById.mockReturnValue(queryResult({
+    _id: CASE_ID,
+    title: 'Matter',
+    clientId: CLIENT_ID,
+    openedAt: new Date('2026-05-01T00:00:00.000Z'),
+    closedAt: null,
+  }));
   mocks.caseFindByIdAndUpdate.mockImplementation(async (_id, update) => ({ _id, ...update }));
   mocks.caseFindByIdAndDelete.mockResolvedValue({ _id: CASE_ID });
   mocks.caseUpdateOne.mockResolvedValue({ modifiedCount: 1 });
+  mocks.caseExists.mockResolvedValue(null);
+  mocks.caseCountDocuments.mockResolvedValue(0);
   mocks.timeEntryFind.mockReturnValue(queryResult([]));
   mocks.timeEntryCountDocuments.mockResolvedValue(0);
   mocks.invoiceFind.mockReturnValue(queryResult([]));
@@ -232,6 +244,63 @@ test('POST /api/cases creates with the canonical payload after reference checks'
     assignedUsers: [USER_ID, SECOND_USER_ID],
   }));
   expect(body.data.title).toBe('Matter');
+});
+
+test('POST /api/cases rejects duplicate case titles for the same client', async () => {
+  mocks.caseExists.mockResolvedValue({ _id: '64b000000000000000000099' });
+
+  const response = await jsonRequest('/api/cases', {
+    method: 'POST',
+    body: JSON.stringify({
+      clientId: CLIENT_ID,
+      title: 'Matter',
+    }),
+  });
+  const body = await response.json();
+
+  expect(response.status).toBe(409);
+  expect(body.message).toBe('Case title already exists for this client');
+  expect(mocks.caseCreate).not.toHaveBeenCalled();
+});
+
+test('POST /api/cases rejects closedAt before openedAt', async () => {
+  const response = await jsonRequest('/api/cases', {
+    method: 'POST',
+    body: JSON.stringify({
+      clientId: CLIENT_ID,
+      title: 'Matter',
+      status: 'closed',
+      openedAt: '2026-05-21T10:00:00.000Z',
+      closedAt: '2026-05-20T10:00:00.000Z',
+    }),
+  });
+
+  expect(response.status).toBe(400);
+  expect(mocks.caseCreate).not.toHaveBeenCalled();
+});
+
+test('GET /api/cases supports filtering and pagination', async () => {
+  const query = queryResult([{ _id: CASE_ID, title: 'Matter' }]);
+  mocks.caseFind.mockReturnValue(query);
+  mocks.caseCountDocuments.mockResolvedValue(1);
+
+  const response = await jsonRequest(`/api/cases?page=2&limit=10&status=open&clientId=${CLIENT_ID}&q=Matter`);
+  const body = await response.json();
+
+  expect(response.status).toBe(200);
+  expect(mocks.caseFind).toHaveBeenCalledWith(expect.objectContaining({
+    clientId: CLIENT_ID,
+    status: 'open',
+    $or: expect.any(Array),
+  }));
+  expect(query.skip).toHaveBeenCalledWith(10);
+  expect(query.limit).toHaveBeenCalledWith(10);
+  expect(body.meta).toEqual({
+    page: 2,
+    limit: 10,
+    total: 1,
+    totalPages: 1,
+  });
 });
 
 test('PUT /api/cases/:caseId rejects unknown payload fields', async () => {
@@ -369,6 +438,20 @@ test('POST /api/case-assignments rejects duplicate active assignments', async ()
   expect(response.status).toBe(409);
   expect(body.message).toBe('Active assignment already exists for this user and case');
   expect(mocks.assignmentCreate).not.toHaveBeenCalled();
+});
+
+test('GET /api/case-assignments/:id returns a single assignment', async () => {
+  const query = queryResult({ _id: ASSIGNMENT_ID, caseId: CASE_ID, userId: USER_ID });
+  mocks.assignmentFindById.mockReturnValue(query);
+
+  const response = await jsonRequest(`/api/case-assignments/${ASSIGNMENT_ID}`);
+  const body = await response.json();
+
+  expect(response.status).toBe(200);
+  expect(mocks.assignmentFindById).toHaveBeenCalledWith(ASSIGNMENT_ID);
+  expect(query.populate).toHaveBeenCalledWith('caseId', 'title status');
+  expect(query.populate).toHaveBeenCalledWith('userId', 'name role email');
+  expect(body.data._id).toBe(ASSIGNMENT_ID);
 });
 
 test('PUT /api/case-assignments/:id updates assignment fields with validators enabled', async () => {

@@ -26,7 +26,7 @@ const qualification = (value) => {
 
 export const validateLogin = validateBody({
   name: [required, string({ min: 1, max: 120 })],
-  mobile: [required, string({ min: 6, max: 30 })],
+  mobile: [required, string({ min: 10, max: 10 }), matches(/^\d{10}$/, "a 10-digit mobile number")],
   password: [required, string({ min: 1, max: 128 })],
   role: [required, oneOf(roles)],
   firmId: [required, objectId()],

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   assignmentFindOne: vi.fn(),
   rateCardFindOne: vi.fn(),
   timeEntryFindOne: vi.fn(),
+  timeEntryFindById: vi.fn(),
   timeEntryCreate: vi.fn(),
 }));
 
@@ -66,6 +67,7 @@ vi.mock('../modules/rates/models/RateCard.js', () => ({
 vi.mock('../modules/timeEntries/models/TimeEntry.js', () => ({
   TimeEntry: {
     findOne: mocks.timeEntryFindOne,
+    findById: mocks.timeEntryFindById,
     create: mocks.timeEntryCreate,
   },
 }));
@@ -78,6 +80,22 @@ const CLIENT_ID = '64b000000000000000000023';
 const USER_ID = '64b000000000000000000024';
 const OTHER_USER_ID = '64b000000000000000000025';
 const TIME_ENTRY_ID = '64b000000000000000000026';
+
+const activityDoc = (overrides = {}) => ({
+  _id: ACTIVITY_ID,
+  caseId: CASE_ID,
+  clientId: CLIENT_ID,
+  userId: USER_ID,
+  activityType: 'research',
+  activityCode: 'L100',
+  narrative: 'Research memo',
+  durationMinutes: 30,
+  roundedDurationMinutes: 30,
+  billable: true,
+  status: 'captured',
+  conversionStatus: 'unconverted',
+  ...overrides,
+});
 
 let server;
 let baseUrl;
@@ -148,20 +166,7 @@ beforeEach(() => {
   mocks.activityFindOne.mockResolvedValue(null);
   mocks.activityCreate.mockImplementation(async (payload) => ({ _id: ACTIVITY_ID, ...payload }));
   mocks.activityFind.mockReturnValue(queryResult([]));
-  mocks.activityFindById.mockResolvedValue({
-    _id: ACTIVITY_ID,
-    caseId: CASE_ID,
-    clientId: CLIENT_ID,
-    userId: USER_ID,
-    activityType: 'research',
-    activityCode: 'L100',
-    narrative: 'Research memo',
-    durationMinutes: 30,
-    roundedDurationMinutes: 30,
-    billable: true,
-    status: 'captured',
-    conversionStatus: 'unconverted',
-  });
+  mocks.activityFindById.mockResolvedValue(activityDoc());
   mocks.activityCountDocuments.mockResolvedValue(0);
   mocks.activityFindByIdAndUpdate.mockImplementation(async (_id, update) => ({
     _id,
@@ -171,6 +176,7 @@ beforeEach(() => {
   mocks.activityUpdateOne.mockResolvedValue({ modifiedCount: 1 });
   mocks.rateCardFindOne.mockReturnValue(queryResult({ ratePerHour: 6000 }));
   mocks.timeEntryFindOne.mockResolvedValue(null);
+  mocks.timeEntryFindById.mockResolvedValue(null);
   mocks.timeEntryCreate.mockImplementation(async ([payload]) => [{ _id: TIME_ENTRY_ID, ...payload }]);
 });
 
@@ -403,6 +409,26 @@ test('POST /api/activities rejects overlapping work ranges for a lawyer', async 
   expect(mocks.activityCreate).not.toHaveBeenCalled();
 });
 
+test('POST /api/activities allows adjacent work ranges at the overlap boundary', async () => {
+  const response = await jsonRequest('/api/activities', {
+    method: 'POST',
+    body: JSON.stringify({
+      caseId: CASE_ID,
+      clientId: CLIENT_ID,
+      activityType: 'meeting',
+      startedAt: '2026-05-20T09:30:00.000Z',
+      endedAt: '2026-05-20T10:00:00.000Z',
+    }),
+  });
+
+  const overlapQuery = mocks.activityFindOne.mock.calls[0][0];
+
+  expect(response.status).toBe(201);
+  expect(overlapQuery.startedAt.$lt.toISOString()).toBe('2026-05-20T10:00:00.000Z');
+  expect(overlapQuery.endedAt.$gt.toISOString()).toBe('2026-05-20T09:30:00.000Z');
+  expect(mocks.activityCreate).toHaveBeenCalled();
+});
+
 test('POST /api/activities blocks closed cases for non-admin users', async () => {
   mocks.caseFindById.mockResolvedValue({
     _id: CASE_ID,
@@ -422,6 +448,32 @@ test('POST /api/activities blocks closed cases for non-admin users', async () =>
   });
 
   expect(response.status).toBe(400);
+  expect(mocks.activityCreate).not.toHaveBeenCalled();
+});
+
+test('POST /api/activities rejects overlong text fields before storage', async () => {
+  const basePayload = {
+    caseId: CASE_ID,
+    clientId: CLIENT_ID,
+    activityType: 'research',
+    durationMinutes: 30,
+  };
+  const cases = [
+    ['narrative', 'x'.repeat(2001)],
+    ['sourceRef', 'x'.repeat(256)],
+    ['activityCode', 'x'.repeat(81)],
+    ['timezone', 'x'.repeat(81)],
+  ];
+
+  for (const [field, value] of cases) {
+    const response = await jsonRequest('/api/activities', {
+      method: 'POST',
+      body: JSON.stringify({ ...basePayload, [field]: value }),
+    });
+
+    expect(response.status).toBe(400);
+  }
+
   expect(mocks.activityCreate).not.toHaveBeenCalled();
 });
 
@@ -450,11 +502,154 @@ test('GET /api/activities rejects non-admin requests for another user', async ()
   expect(mocks.activityFind).not.toHaveBeenCalled();
 });
 
+test('GET /api/activities applies source, billable, sort, pagination, and date boundary filters', async () => {
+  const query = queryResult([]);
+  mocks.activityFind.mockReturnValue(query);
+
+  const response = await jsonRequest(
+    '/api/activities?source=manual&billable=false&status=captured&activityType=research&from=2026-05-20T00:00:00.000Z&to=2026-05-20T00:00:00.000Z&page=2&limit=10&sort=-createdAt'
+  );
+
+  const findQuery = mocks.activityFind.mock.calls[0][0];
+
+  expect(response.status).toBe(200);
+  expect(findQuery).toEqual({
+    userId: USER_ID,
+    source: 'manual',
+    billable: false,
+    status: 'captured',
+    activityType: 'research',
+    workDate: {
+      $gte: expect.any(Date),
+      $lte: expect.any(Date),
+    },
+  });
+  expect(findQuery.workDate.$gte.toISOString()).toBe('2026-05-20T00:00:00.000Z');
+  expect(findQuery.workDate.$lte.toISOString()).toBe('2026-05-20T00:00:00.000Z');
+  expect(query.sort).toHaveBeenCalledWith('-createdAt');
+  expect(query.skip).toHaveBeenCalledWith(10);
+  expect(query.limit).toHaveBeenCalledWith(10);
+});
+
+test('GET /api/activities rejects invalid sort, page, and inverted date range', async () => {
+  const invalidSort = await jsonRequest('/api/activities?sort=-bad');
+  const invalidPage = await jsonRequest('/api/activities?page=0');
+  const invalidRange = await jsonRequest('/api/activities?from=2026-05-21T00:00:00.000Z&to=2026-05-20T00:00:00.000Z');
+
+  expect(invalidSort.status).toBe(400);
+  expect(invalidPage.status).toBe(400);
+  expect(invalidRange.status).toBe(400);
+  expect(mocks.activityFind).not.toHaveBeenCalled();
+});
+
 test('GET /api/activities validates and caps pagination at 100', async () => {
   const response = await jsonRequest('/api/activities?limit=101');
 
   expect(response.status).toBe(400);
   expect(mocks.activityFind).not.toHaveBeenCalled();
+});
+
+test('GET /api/activities keeps partner list visibility scoped to self', async () => {
+  const response = await jsonRequest(
+    `/api/activities?userId=${OTHER_USER_ID}`,
+    {},
+    'partner',
+    USER_ID
+  );
+
+  expect(response.status).toBe(403);
+  expect(mocks.activityFind).not.toHaveBeenCalled();
+});
+
+test('GET /api/activities/:activityId returns 404 when missing', async () => {
+  mocks.activityFindById.mockResolvedValue(null);
+
+  const response = await jsonRequest(`/api/activities/${ACTIVITY_ID}`);
+
+  expect(response.status).toBe(404);
+});
+
+test('GET /api/activities/:activityId rejects non-owner access for non-admin users', async () => {
+  mocks.activityFindById.mockResolvedValue(activityDoc({ userId: OTHER_USER_ID }));
+
+  const response = await jsonRequest(`/api/activities/${ACTIVITY_ID}`);
+
+  expect(response.status).toBe(403);
+});
+
+test('GET /api/activities/:activityId allows admin access to another user activity', async () => {
+  mocks.activityFindById.mockResolvedValue(activityDoc({ userId: OTHER_USER_ID }));
+
+  const response = await jsonRequest(`/api/activities/${ACTIVITY_ID}`, {}, 'admin');
+  const body = await response.json();
+
+  expect(response.status).toBe(200);
+  expect(body.data.userId).toBe(OTHER_USER_ID);
+});
+
+test('PATCH /api/activities/:activityId updates editable fields with audit metadata', async () => {
+  const response = await jsonRequest(`/api/activities/${ACTIVITY_ID}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      narrative: 'Updated memo',
+      durationMinutes: 45,
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  expect(mocks.activityFindByIdAndUpdate).toHaveBeenCalledWith(
+    ACTIVITY_ID,
+    expect.objectContaining({
+      $set: expect.objectContaining({
+        narrative: 'Updated memo',
+        durationMinutes: 45,
+        roundedDurationMinutes: 45,
+        updatedBy: USER_ID,
+      }),
+      $push: {
+        auditTrail: expect.objectContaining({
+          action: 'updated',
+          actorId: USER_ID,
+          changes: {
+            narrative: 'Updated memo',
+            durationMinutes: 45,
+          },
+        }),
+      },
+    }),
+    { new: true, runValidators: true }
+  );
+});
+
+test('PATCH /api/activities/:activityId rejects unknown fields, empty body, and invalid enum values', async () => {
+  const unknownField = await jsonRequest(`/api/activities/${ACTIVITY_ID}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ caseId: CASE_ID }),
+  });
+  const emptyBody = await jsonRequest(`/api/activities/${ACTIVITY_ID}`, {
+    method: 'PATCH',
+    body: JSON.stringify({}),
+  });
+  const invalidEnum = await jsonRequest(`/api/activities/${ACTIVITY_ID}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ activityType: 'coffee' }),
+  });
+
+  expect(unknownField.status).toBe(400);
+  expect(emptyBody.status).toBe(400);
+  expect(invalidEnum.status).toBe(400);
+  expect(mocks.activityFindByIdAndUpdate).not.toHaveBeenCalled();
+});
+
+test('PATCH /api/activities/:activityId returns conflict for duplicate sourceRef', async () => {
+  mocks.activityFindByIdAndUpdate.mockRejectedValue({ code: 11000 });
+
+  const response = await jsonRequest(`/api/activities/${ACTIVITY_ID}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ source: 'gmail', sourceRef: 'gmail-message-1' }),
+  });
+
+  expect(response.status).toBe(409);
 });
 
 test('PATCH /api/activities/:activityId rejects edits after conversion', async () => {
@@ -470,6 +665,53 @@ test('PATCH /api/activities/:activityId rejects edits after conversion', async (
   });
 
   expect(response.status).toBe(409);
+  expect(mocks.activityFindByIdAndUpdate).not.toHaveBeenCalled();
+});
+
+test('Lifecycle actions reject non-owner activity changes for non-admin users', async () => {
+  const actions = ['review', 'ignore', 'lock', 'void'];
+
+  for (const action of actions) {
+    mocks.activityFindById.mockResolvedValue(activityDoc({ userId: OTHER_USER_ID }));
+
+    const response = await jsonRequest(`/api/activities/${ACTIVITY_ID}/${action}`, {
+      method: 'POST',
+      body: JSON.stringify(action === 'review' ? {} : { reason: 'Not needed' }),
+    });
+
+    expect(response.status).toBe(403);
+  }
+
+  expect(mocks.activityFindByIdAndUpdate).not.toHaveBeenCalled();
+});
+
+test('Lifecycle actions reject converted, locked, and voided activities', async () => {
+  const cases = [
+    ['review', 'converted'],
+    ['ignore', 'converted'],
+    ['lock', 'converted'],
+    ['void', 'converted'],
+    ['review', 'locked'],
+    ['ignore', 'locked'],
+    ['lock', 'locked'],
+    ['void', 'locked'],
+    ['review', 'voided'],
+    ['ignore', 'voided'],
+    ['lock', 'voided'],
+    ['void', 'voided'],
+  ];
+
+  for (const [action, status] of cases) {
+    mocks.activityFindById.mockResolvedValue(activityDoc({ status }));
+
+    const response = await jsonRequest(`/api/activities/${ACTIVITY_ID}/${action}`, {
+      method: 'POST',
+      body: JSON.stringify(action === 'review' ? {} : { reason: 'Status is final' }),
+    });
+
+    expect(response.status).toBe(409);
+  }
+
   expect(mocks.activityFindByIdAndUpdate).not.toHaveBeenCalled();
 });
 
@@ -491,6 +733,33 @@ test('POST /api/activities/:activityId/void soft-voids activity with audit metad
       $push: {
         auditTrail: expect.objectContaining({
           action: 'voided',
+          actorId: USER_ID,
+          reason: 'Duplicate capture',
+        }),
+      },
+    }),
+    { new: true, runValidators: true }
+  );
+});
+
+test('DELETE /api/activities/:activityId soft-voids activity as a delete lifecycle action', async () => {
+  const response = await jsonRequest(`/api/activities/${ACTIVITY_ID}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ reason: 'Duplicate capture' }),
+  });
+
+  expect(response.status).toBe(200);
+  expect(mocks.activityFindByIdAndUpdate).toHaveBeenCalledWith(
+    ACTIVITY_ID,
+    expect.objectContaining({
+      $set: expect.objectContaining({
+        status: 'voided',
+        voidedBy: USER_ID,
+        voidReason: 'Duplicate capture',
+      }),
+      $push: {
+        auditTrail: expect.objectContaining({
+          action: 'deleted',
           actorId: USER_ID,
           reason: 'Duplicate capture',
         }),
@@ -602,4 +871,93 @@ test('POST /api/time-entries/from-activity/:activityId creates time entry and ma
     { session }
   );
   expect(body._id).toBe(TIME_ENTRY_ID);
+});
+
+test('POST /api/time-entries/:id/submit records submit metadata', async () => {
+  const entry = {
+    _id: TIME_ENTRY_ID,
+    userId: USER_ID,
+    status: 'draft',
+    narrative: 'Research memo',
+    billableMinutes: 30,
+    nonbillableMinutes: 0,
+    rateApplied: 6000,
+    save: vi.fn(async function save() {
+      return this;
+    }),
+  };
+  mocks.timeEntryFindById.mockResolvedValue(entry);
+
+  const response = await jsonRequest(`/api/time-entries/${TIME_ENTRY_ID}/submit`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+  const body = await response.json();
+
+  expect(response.status).toBe(200);
+  expect(entry.status).toBe('submitted');
+  expect(entry.submittedAt).toBeInstanceOf(Date);
+  expect(entry.submittedBy).toBe(USER_ID);
+  expect(entry.save).toHaveBeenCalledTimes(1);
+  expect(body.status).toBe('submitted');
+});
+
+test('POST /api/time-entries/:id/approve is reviewer-only and blocks self-approval', async () => {
+  const entry = {
+    _id: TIME_ENTRY_ID,
+    userId: USER_ID,
+    status: 'submitted',
+    save: vi.fn(async function save() {
+      return this;
+    }),
+  };
+  mocks.timeEntryFindById.mockResolvedValue(entry);
+
+  const selfReview = await jsonRequest(`/api/time-entries/${TIME_ENTRY_ID}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }, 'partner', USER_ID);
+
+  expect(selfReview.status).toBe(403);
+  expect(entry.save).not.toHaveBeenCalled();
+
+  const reviewerReview = await jsonRequest(`/api/time-entries/${TIME_ENTRY_ID}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }, 'partner', OTHER_USER_ID);
+
+  expect(reviewerReview.status).toBe(200);
+  expect(entry.status).toBe('approved');
+  expect(entry.reviewedAt).toBeInstanceOf(Date);
+  expect(entry.reviewedBy).toBe(OTHER_USER_ID);
+});
+
+test('POST /api/time-entries/:id/reject requires and stores a reason', async () => {
+  const entry = {
+    _id: TIME_ENTRY_ID,
+    userId: USER_ID,
+    status: 'submitted',
+    save: vi.fn(async function save() {
+      return this;
+    }),
+  };
+  mocks.timeEntryFindById.mockResolvedValue(entry);
+
+  const missingReason = await jsonRequest(`/api/time-entries/${TIME_ENTRY_ID}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }, 'partner', OTHER_USER_ID);
+
+  expect(missingReason.status).toBe(400);
+  expect(entry.save).not.toHaveBeenCalled();
+
+  const response = await jsonRequest(`/api/time-entries/${TIME_ENTRY_ID}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason: 'Narrative needs more detail' }),
+  }, 'partner', OTHER_USER_ID);
+
+  expect(response.status).toBe(200);
+  expect(entry.status).toBe('rejected');
+  expect(entry.rejectionReason).toBe('Narrative needs more detail');
+  expect(entry.reviewedBy).toBe(OTHER_USER_ID);
 });
