@@ -4,8 +4,8 @@ import mongoose from 'mongoose';
 
 const TaxSettingsSchema = new mongoose.Schema(
   {
-    taxName: { type: String, default: 'GST' },
-    taxRatePct: { type: Number, default: 0 },
+    taxName: { type: String, default: 'GST', trim: true, maxlength: 80 },
+    taxRatePct: { type: Number, default: 0, min: 0, max: 100 },
     inclusive: { type: Boolean, default: false },
   },
   { _id: false }
@@ -13,12 +13,12 @@ const TaxSettingsSchema = new mongoose.Schema(
 
 const AddressSchema = new mongoose.Schema(
   {
-    line1: String,
-    line2: String,
-    city: String,
-    state: String,
-    postalCode: String,
-    country: { type: String, default: 'IN' },
+    line1: { type: String, trim: true, maxlength: 180 },
+    line2: { type: String, trim: true, maxlength: 180 },
+    city: { type: String, trim: true, maxlength: 180 },
+    state: { type: String, trim: true, maxlength: 180 },
+    postalCode: { type: String, trim: true, maxlength: 180 },
+    country: { type: String, trim: true, uppercase: true, default: 'IN', maxlength: 180 },
   },
   { _id: false }
 );
@@ -26,11 +26,11 @@ const AddressSchema = new mongoose.Schema(
 const FirmSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
-    currency: { type: String, default: 'INR' },
+    currency: { type: String, trim: true, uppercase: true, minlength: 3, maxlength: 3, default: 'INR' },
     taxSettings: { type: TaxSettingsSchema, default: () => ({}) },
     address: { type: AddressSchema },
     billingPreferences: {
-      defaultRate: { type: Number },
+      defaultRate: { type: Number, min: 0 },
       autoSync: { type: Boolean, default: false },
     },
   },

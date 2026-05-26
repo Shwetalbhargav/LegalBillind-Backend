@@ -27,7 +27,15 @@ function normalizeMobile(value) {
 }
 
 async function resolveFirmId({ firmId, firmName }) {
-  if (firmId) return firmId;
+  if (firmId) {
+    const firmExists = await Firm.exists({ _id: firmId });
+    if (!firmExists) {
+      const error = new Error("Firm not found. Please choose an existing firm.");
+      error.statusCode = 400;
+      throw error;
+    }
+    return firmId;
+  }
 
   const normalizedFirmName = String(firmName || "").trim();
   if (!normalizedFirmName) return undefined;
