@@ -10,6 +10,7 @@ import {
 import {
   createFirm,
   listFirms,
+  listFirmOptions,
   getFirmById,
   updateFirm,
   deleteFirm,
@@ -20,6 +21,8 @@ import {
 } from '../controllers/firmController.js';
 
 const router = Router();
+
+router.get('/options', listFirmOptions);
 
 router.use(authenticate);
 
