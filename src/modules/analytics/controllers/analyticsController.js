@@ -15,11 +15,12 @@ const dateMatch = (field, query) => {
   return Object.keys(range).length ? { [field]: range } : {};
 };
 
-const billedMatch = { $or: [{ status: 'Logged' }, { pushedAt: { $ne: null } }, { externalEntryId: { $nin: [null, ''] } }] };
-const unbilledMatch = { $and: [{ status: { $ne: 'Logged' } }, { pushedAt: null }, { externalEntryId: { $in: [null, ''] } }] };
+const billedStatuses = ['billed', 'Logged'];
+const billedMatch = { $or: [{ status: { $in: billedStatuses } }, { pushedAt: { $ne: null } }, { externalEntryId: { $nin: [null, ''] } }] };
+const unbilledMatch = { $and: [{ status: { $nin: billedStatuses } }, { pushedAt: null }, { externalEntryId: { $in: [null, ''] } }] };
 const loggedExpression = {
   $or: [
-    { $eq: ['$status', 'Logged'] },
+    { $in: ['$status', billedStatuses] },
     { $ne: ['$pushedAt', null] },
     { $and: [{ $ne: ['$externalEntryId', null] }, { $ne: ['$externalEntryId', ''] }] },
   ],

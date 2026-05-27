@@ -1,11 +1,16 @@
 //src/controllers/billableController.js
 
-import Billable from '../models/Billable.js';
+import Billable, {
+  billableStatusQuery,
+  normalizeBillableStatus,
+} from '../models/Billable.js';
 import {EmailEntry} from '../../emailEntries/models/EmailEntry.js';
-import User from '../../users/models/User.js';
-import {Firm} from '../../firms/models/Firm.js';
 import {Case} from '../../cases/models/Case.js';
-import {Client} from '../../clients/models/Client.js';
+import { resolveBillingRate } from '../../rates/services/rateResolver.js';
+import {
+  convertEmailEntryToBillingRecords,
+  runEmailEntryTransaction,
+} from '../../emailEntries/services/emailEntryConversionService.js';
 
 // Map from activityCode → category (fallbacks to keep data consistent)
 const CATEGORY_BY_CODE = {
@@ -33,17 +38,22 @@ export const createBillable = async (req, res) => {
       durationHours, durationMinutes,
       rate, // optional; will fallback to user/firm
       activityCode, category, subject,
-      status // optional; defaults to 'Pending'
+      status // optional; defaults to 'pending'
     } = req.body;
 
-    // resolve user/firm rate if not provided
+    const finalActivityCode = activityCode || 'OTHER';
+    const workDate = date ? new Date(date) : new Date();
+
+    // Resolve from RateCard/profile/firm defaults if not explicitly provided.
     let finalRate = rate;
-    if (!finalRate) {
-      const user = await User.findById(userId);
-      if (!user) return res.status(404).json({ error: 'User not found' });
-      const firm = await Firm.findById(user.firmId);
-      if (!firm) return res.status(404).json({ error: 'Firm not found' });
-      finalRate = user.billingRate || firm.billingPreferences?.defaultRate || 0;
+    if (finalRate == null) {
+      const resolved = await resolveBillingRate({
+        userId,
+        caseId,
+        activityCode: finalActivityCode,
+        at: workDate,
+      });
+      finalRate = resolved.ratePerHour ?? 0;
     }
 
     const mins =
@@ -54,20 +64,19 @@ export const createBillable = async (req, res) => {
     const durationMinsRounded = roundToIncrement(mins, 6);
     const amount = Number(((durationMinsRounded / 60) * finalRate).toFixed(2));
 
-    const finalActivityCode = activityCode || 'OTHER';
     const finalCategory = category || CATEGORY_BY_CODE[finalActivityCode] || 'Miscellaneous administrative legal work';
 
     const doc = await Billable.create({
       userId, clientId, caseId,
       subject,
       description,
-      date: date ? new Date(date) : new Date(),
+      date: workDate,
       durationMinutes: durationMinsRounded,
       rate: finalRate,
       amount,
       activityCode: finalActivityCode,
       category: finalCategory,
-      status: status || 'Pending'
+      status: normalizeBillableStatus(status)
     });
 
     res.status(201).json(doc);
@@ -80,55 +89,28 @@ export const createBillable = async (req, res) => {
 export const createFromEmail = async (req, res) => {
   try {
     const { emailEntryId } = req.params;
-    const email = await EmailEntry.findById(emailEntryId);
-    if (!email) return res.status(404).json({ error: 'EmailEntry not found' });
-
-    const clientId = email.clientId || email.mappedClientId;
-    const caseId = email.caseId || email.mappedCaseId;
-    if (!clientId || !caseId) {
-      return res.status(422).json({ error: 'Email entry must be mapped to a client and case before creating a billable' });
-    }
-
-    const existing = await Billable.findOne({
-      userId: email.userId,
-      clientId,
-      caseId,
-      subject: email.subject,
-      date: email.workDate || email.createdAt,
-      activityCode: 'EMAIL',
-    });
-    if (existing) {
-      return res.status(200).json(existing);
-    }
-
-    const user = email.userId ? await User.findById(email.userId) : null;
-    const client = await Client.findById(clientId);
-    const firm = user?.firmId ? await Firm.findById(user.firmId) : client?.firmId ? await Firm.findById(client.firmId) : null;
-    const rate = Number(email.rate ?? user?.billingRate ?? firm?.billingPreferences?.defaultRate ?? 0);
-    const durationMinutes = roundToIncrement(email.typingTimeMinutes, 6);
-    const amount = Number(((durationMinutes / 60) * rate).toFixed(2));
-
-    const billable = await Billable.create({
-      caseId,
-      clientId,
-      userId: email.userId,
-      subject: email.subject,
-      activityCode: 'EMAIL',
-      category: CATEGORY_BY_CODE.EMAIL,
-      description: email.billableSummary || `Email: ${email.subject}`,
-      durationMinutes,
-      rate,
-      amount,
-      date: email.workDate || email.createdAt,
-      status: 'Pending'
+    const result = await runEmailEntryTransaction(async (session) => {
+      const email = await EmailEntry.findById(emailEntryId).session(session);
+      if (!email) {
+        const error = new Error('EmailEntry not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (!email.clientId || !email.caseId) {
+        const error = new Error('Email entry must be mapped to a client and case before creating a billable');
+        error.statusCode = 422;
+        throw error;
+      }
+      return convertEmailEntryToBillingRecords(email, {
+        body: req.body || {},
+        actorId: req.user?.id,
+        session,
+      });
     });
 
-    email.meta = { ...(email.meta || {}), billableId: billable._id };
-    await email.save();
-
-    res.status(201).json(billable);
+    res.status(201).json(result.billable);
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    res.status(e.statusCode || 400).json({ error: e.message });
   }
 };
 
@@ -140,7 +122,7 @@ export const getAllBillables = async (req, res) => {
     if (req.query.caseId)    filters.caseId = req.query.caseId;
     if (req.query.category)  filters.category = req.query.category;
     if (req.query.userId)    filters.userId = req.query.userId;
-    if (req.query.status)    filters.status = req.query.status;
+    if (req.query.status)    filters.status = billableStatusQuery(req.query.status);
 
     
     
@@ -183,9 +165,60 @@ export const getBillableById = async (req, res) => {
 };
 
 // ——— Update/Delete ————————————————————————————————————————————
+export const approveBillable = async (req, res) => {
+  try {
+    const billable = await Billable.findById(req.params.id);
+    if (!billable) return res.status(404).json({ error: 'Billable not found' });
+    if (billable.status === 'billed' || billable.invoiceId) {
+      return res.status(409).json({ error: 'Billed entries cannot be approved again' });
+    }
+
+    billable.status = 'approved';
+    billable.approvedAt = new Date();
+    billable.approvedBy = req.user.id;
+    billable.rejectedAt = undefined;
+    billable.rejectedBy = undefined;
+    billable.rejectionReason = undefined;
+
+    await billable.save();
+    res.json(billable);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to approve billable' });
+  }
+};
+
+export const rejectBillable = async (req, res) => {
+  try {
+    const reason = String(req.body?.reason || '').trim();
+    if (!reason) return res.status(400).json({ error: 'Rejection reason is required' });
+    if (reason.length > 500) {
+      return res.status(400).json({ error: 'Rejection reason must be at most 500 characters' });
+    }
+
+    const billable = await Billable.findById(req.params.id);
+    if (!billable) return res.status(404).json({ error: 'Billable not found' });
+    if (billable.status === 'billed' || billable.invoiceId) {
+      return res.status(409).json({ error: 'Billed entries cannot be rejected' });
+    }
+
+    billable.status = 'rejected';
+    billable.rejectedAt = new Date();
+    billable.rejectedBy = req.user.id;
+    billable.rejectionReason = reason;
+    billable.approvedAt = undefined;
+    billable.approvedBy = undefined;
+
+    await billable.save();
+    res.json(billable);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to reject billable' });
+  }
+};
+
 export const updateBillable = async (req, res) => {
   try {
     const patch = { ...req.body };
+    if (patch.status) patch.status = normalizeBillableStatus(patch.status);
 
     // allow hours or minutes in updates; keep amount consistent
     let minutes = patch.durationMinutes;
@@ -196,9 +229,21 @@ export const updateBillable = async (req, res) => {
       patch.durationMinutes = roundToIncrement(minutes, 6);
     }
 
-    if (typeof patch.rate === 'number' || typeof patch.durationMinutes === 'number') {
+    const rateResolutionFields = ['userId', 'caseId', 'activityCode', 'date'];
+    const shouldResolveRate = patch.rate == null && rateResolutionFields.some((field) => field in patch);
+    let current = null;
+    if (typeof patch.rate === 'number' || typeof patch.durationMinutes === 'number' || shouldResolveRate) {
       // need current or patched values to compute amount
-      const current = await Billable.findById(req.params.id).select('rate durationMinutes');
+      current = await Billable.findById(req.params.id).select('rate durationMinutes userId caseId activityCode date');
+      if (shouldResolveRate) {
+        const resolved = await resolveBillingRate({
+          userId: patch.userId ?? current?.userId,
+          caseId: patch.caseId ?? current?.caseId,
+          activityCode: patch.activityCode ?? current?.activityCode,
+          at: patch.date ?? current?.date,
+        });
+        if (resolved.ratePerHour != null) patch.rate = resolved.ratePerHour;
+      }
       const useRate = typeof patch.rate === 'number' ? patch.rate : current?.rate;
       const useMinutes = typeof patch.durationMinutes === 'number' ? patch.durationMinutes : current?.durationMinutes;
       if (typeof useRate === 'number' && typeof useMinutes === 'number') {

@@ -87,8 +87,8 @@ export const getKpiSummary = async (req, res) => {
       {
         $match: {
           ...scopeFilters(scope, scopeId),
-          status: { $in: ['submitted', 'approved'] },
-          date: { $lt: end }, // anything not yet billed by end of period
+          status: 'approved',
+          date: { $lt: end }, // approved but not yet billed by end of period
         },
       },
       { $group: { _id: null, WIP: { $sum: { $ifNull: ['$amount', 0] } } } },
@@ -462,7 +462,7 @@ export const getKpiTrend = async (req, res) => {
           {
             $match: {
               ...scopeFilters(scope, scopeId),
-              status: { $in: ['submitted', 'approved'] },
+              status: 'approved',
               date: { $lt: end },
             },
           },

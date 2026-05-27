@@ -21,6 +21,7 @@ import { arRoutes, paymentRoutes } from '../modules/payments/index.js';
 import { rateCardRoutes } from '../modules/rates/index.js';
 import { reportsRoutes } from '../modules/reports/index.js';
 import { timeEntryRoutes } from '../modules/timeEntries/index.js';
+import { workSessionRoutes } from '../modules/workSessions/index.js';
 import {
   adminRoutes,
   associateProfileRoutes,
@@ -52,6 +53,7 @@ router.use('/rate-cards', rateCardRoutes);
 router.use('/reports', reportsRoutes);
 router.use('/revenue', revenueRoutes);
 router.use('/time-entries', timeEntryRoutes);
+router.use('/work-sessions', workSessionRoutes);
 router.use('/users', userRoutes);
 router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);

@@ -1,4 +1,4 @@
-import { date, number, objectId, oneOf, required, string, validateBody } from '../../../middleware/validate.js';
+import { date, number, objectId, oneOf, required, string, validateBody, validateParams } from '../../../middleware/validate.js';
 
 const statuses = ['draft', 'submitted', 'approved', 'billed', 'paid', 'rejected'];
 
@@ -26,4 +26,8 @@ export const validateUpdateTimeEntry = validateBody({
   amount: [number({ min: 0 })],
   date: [date()],
   status: [oneOf(statuses)],
+});
+
+export const validateActivityIdParam = validateParams({
+  activityId: [required, objectId()],
 });

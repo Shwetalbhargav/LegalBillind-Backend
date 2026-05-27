@@ -11,6 +11,17 @@ export const validateGenerateFromTime = validateBody({
   createdBy: [objectId()],
 });
 
+export const validateGenerateFromBillables = validateBody({
+  clientId: [required, objectId()],
+  caseId: [objectId()],
+  billableIds: [required, array({ min: 1, item: objectId() })],
+  currency: [string({ min: 3, max: 3 })],
+  dueDate: [date()],
+  periodStart: [date()],
+  periodEnd: [date()],
+  createdBy: [objectId()],
+});
+
 export const validateSendInvoice = validateBody({
   dueDate: [date()],
   pdfUrl: [string({ max: 2000 })],

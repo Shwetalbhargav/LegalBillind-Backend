@@ -1,4 +1,4 @@
-import { array, objectId, oneOf, required, string, validateBody } from '../../../middleware/validate.js';
+import { array, matches, objectId, oneOf, required, string, validateBody } from '../../../middleware/validate.js';
 
 const roles = ['partner', 'lawyer', 'associate', 'intern', 'admin'];
 const registerRoles = roles.filter((role) => role !== 'admin');
@@ -26,18 +26,20 @@ const qualification = (value) => {
 
 export const validateLogin = validateBody({
   name: [required, string({ min: 1, max: 120 })],
-  mobile: [required, string({ min: 6, max: 30 })],
+  mobile: [required, string({ min: 10, max: 10 }), matches(/^\d{10}$/, "a 10-digit mobile number")],
   password: [required, string({ min: 1, max: 128 })],
   role: [required, oneOf(roles)],
+  firmId: [required, objectId()],
 });
 
 export const validateRegister = validateBody({
-  name: [required, string({ min: 1, max: 120 })],
-  mobile: [required, string({ min: 6, max: 30 })],
+  name: [required, string({ min: 1, max: 120 }), matches(/^[A-Za-z .'-]+$/, "letters, spaces, apostrophes, periods, or hyphens only")],
+  mobile: [required, string({ min: 10, max: 10 }), matches(/^\d{10}$/, "a 10-digit mobile number")],
   password: [required, string({ min: 8, max: 128 })],
   role: [required, oneOf(registerRoles)],
-  email: [string({ max: 254 })],
-  firmId: [objectId()],
+  email: [required, string({ max: 254 }), matches(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "a valid email address")],
+  firmId: [required, objectId()],
+  firmName: [string({ min: 1, max: 180 })],
   address: [string({ max: 500 })],
   qualifications: [array({ item: qualification })],
 });

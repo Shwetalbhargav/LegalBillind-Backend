@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticate } from '../../../middleware/auth.js';
 import { generateBillableSummary } from '../services/gptService.js';
 import {
+  validateAssist,
   validateEmailToBillable,
   validateGenerateEmail,
 } from '../validators/aiValidators.js';
@@ -149,6 +150,67 @@ router.post('/generate-email', validateGenerateEmail, async (req, res) => {
     return res.json({ success: true, email: { text } });
   } catch (err) {
     console.error('[AI] generate-email failed:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * POST /api/ai/assist
+ * Global MVP assistant for app-wide drafting, summarization, research notes,
+ * and billable narrative generation.
+ */
+router.post('/assist', validateAssist, async (req, res) => {
+  try {
+    const { mode, input, context = {} } = req.body || {};
+    const cleanInput = String(input || '').trim();
+
+    if (mode === 'draft_email') {
+      const draft = buildEmailDraft(cleanInput);
+      return res.json({
+        success: true,
+        mode,
+        result: {
+          title: draft.subject,
+          text: [`Subject: ${draft.subject}`, '', ...draft.lines].join('\n'),
+        },
+        context,
+      });
+    }
+
+    if (mode === 'billable_narrative') {
+      const narrative = await generateBillableSummary({
+        subject: context.subject || 'Billable work',
+        body: cleanInput,
+      });
+      return res.json({
+        success: true,
+        mode,
+        result: {
+          title: 'Billable Narrative',
+          text: narrative,
+        },
+        context,
+      });
+    }
+
+    const sentences = cleanInput
+      .split(/(?<=[.!?])\s+/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const summary = sentences.slice(0, mode === 'summarize_text' ? 3 : 5).join(' ') || cleanInput;
+    const prefix = mode === 'analyze_text' ? 'Key analysis' : 'Summary';
+
+    return res.json({
+      success: true,
+      mode,
+      result: {
+        title: prefix,
+        text: `${prefix}: ${summary}`,
+      },
+      context,
+    });
+  } catch (err) {
+    console.error('[AI] assist failed:', err);
     return res.status(500).json({ success: false, message: err.message });
   }
 });

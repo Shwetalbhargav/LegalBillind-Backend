@@ -20,6 +20,11 @@ const TimeEntrySchema = new mongoose.Schema(
     date: { type: Date, default: () => new Date() },
 
     status: { type: String, enum: ['draft', 'submitted', 'approved', 'billed', 'paid', 'rejected'], default: 'draft', index: true },
+    submittedAt: { type: Date },
+    submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reviewedAt: { type: Date },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rejectionReason: { type: String },
 
     external: {
       system: { type: String },
@@ -31,6 +36,15 @@ const TimeEntrySchema = new mongoose.Schema(
 );
 
 TimeEntrySchema.index({ clientId: 1, caseId: 1, date: -1 });
+TimeEntrySchema.index(
+  { activityId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      activityId: { $exists: true },
+    },
+  }
+);
 
 export const TimeEntry = mongoose.model('TimeEntry', TimeEntrySchema);
 export default TimeEntry;

@@ -3,6 +3,8 @@ import mongoose from 'mongoose';
 import { Invoice } from '../models/Invoice.js';
 import { InvoiceLine } from '../models/InvoiceLine.js';
 import { TimeEntry } from '../../timeEntries/models/TimeEntry.js';
+import Billable from '../../billables/models/Billable.js';
+import { EmailEntry } from '../../emailEntries/models/EmailEntry.js';
 
 /**
  * Utility: recalc invoice totals from InvoiceLine rows
@@ -119,7 +121,7 @@ export const generateFromApprovedTime = async (req, res) => {
 
     // Create lines
     const linesToInsert = entries.map(e => {
-      const qtyHours = Number(((e.billableMinutes || 0) / 60).toFixed(2));
+      const qtyHours = Number(((e.billableMinutes || 0) / 60).toFixed(4));
       const rate = Number(e.rateApplied || 0);
       const amount = Number((rate * qtyHours).toFixed(2));
       return {
@@ -142,6 +144,11 @@ export const generateFromApprovedTime = async (req, res) => {
       { $set: { status: 'billed' } },
       { session }
     );
+    await EmailEntry.updateMany(
+      { 'meta.timeEntryId': { $in: timeEntryIds } },
+      { $set: { status: 'billed', billedAt: new Date() } },
+      { session }
+    );
 
     await session.commitTransaction();
     session.endSession();
@@ -151,6 +158,105 @@ export const generateFromApprovedTime = async (req, res) => {
     session.endSession();
     console.error(error);
     res.status(500).json({ error: 'Failed to generate invoice from time' });
+  }
+};
+
+/**
+ * POST /api/invoices/from-billables
+ * Body: { clientId, caseId?, billableIds: [] }
+ * Generates a draft invoice from APPROVED Billables and marks them billed.
+ */
+export const generateFromApprovedBillables = async (req, res) => {
+  const { clientId, caseId, billableIds = [], currency = 'INR', dueDate, periodStart, periodEnd, createdBy } = req.body;
+
+  if (!clientId || !Array.isArray(billableIds) || billableIds.length === 0) {
+    return res.status(400).json({ error: 'clientId and billableIds[] are required' });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const billables = await Billable.find({ _id: { $in: billableIds } }).session(session);
+    if (billables.length !== billableIds.length) {
+      await session.abortTransaction();
+      return res.status(404).json({ error: 'One or more billables not found' });
+    }
+
+    for (const billable of billables) {
+      if (billable.status !== 'approved') {
+        await session.abortTransaction();
+        return res.status(400).json({ error: 'All billables must be approved before invoicing' });
+      }
+      if (billable.invoiceId || billable.status === 'billed') {
+        await session.abortTransaction();
+        return res.status(409).json({ error: 'One or more billables are already billed' });
+      }
+      if (String(billable.clientId) !== String(clientId)) {
+        await session.abortTransaction();
+        return res.status(400).json({ error: 'All billables must match the provided clientId' });
+      }
+      if (caseId && String(billable.caseId) !== String(caseId)) {
+        await session.abortTransaction();
+        return res.status(400).json({ error: 'All billables must match the provided caseId' });
+      }
+    }
+
+    const uniqueCaseIds = [...new Set(billables.map((billable) => String(billable.caseId)))];
+    const invoiceCaseId = caseId || (uniqueCaseIds.length === 1 ? uniqueCaseIds[0] : undefined);
+    const items = billables.map((billable) => {
+      const durationMinutes = Number(billable.durationMinutes || 0);
+      const rate = Number(billable.rate || 0);
+      const amount = Number(
+        (billable.amount != null ? billable.amount : rate * (durationMinutes / 60)).toFixed(2)
+      );
+
+      return {
+        billableId: billable._id,
+        description: billable.description || billable.category || 'Professional services',
+        durationMinutes,
+        rate,
+        amount,
+      };
+    });
+
+    const [invoice] = await Invoice.create([{
+      clientId,
+      caseId: invoiceCaseId,
+      periodStart: periodStart || undefined,
+      periodEnd: periodEnd || undefined,
+      issueDate: new Date(),
+      dueDate: dueDate || undefined,
+      currency,
+      status: 'draft',
+      createdBy: createdBy || req.user?.id,
+      items,
+    }], { session });
+
+    await Billable.updateMany(
+      { _id: { $in: billableIds } },
+      {
+        $set: {
+          status: 'billed',
+          invoiceId: invoice._id,
+          pushedAt: new Date(),
+        },
+      },
+      { session }
+    );
+    await EmailEntry.updateMany(
+      { 'meta.billableId': { $in: billableIds } },
+      { $set: { status: 'billed', billedAt: new Date() } },
+      { session }
+    );
+
+    await session.commitTransaction();
+    res.status(201).json(invoice);
+  } catch (error) {
+    await session.abortTransaction();
+    console.error(error);
+    res.status(500).json({ error: 'Failed to generate invoice from billables' });
+  } finally {
+    session.endSession();
   }
 };
 

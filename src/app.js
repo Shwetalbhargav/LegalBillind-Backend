@@ -48,6 +48,9 @@ app.use(
       if (!origin) return callback(null, true);
       const normalizedOrigin = origin.replace(/\/$/, '');
       if (allowedOrigins.has(normalizedOrigin)) return callback(null, true);
+      if (normalizedOrigin.startsWith('chrome-extension://')) {
+        return callback(null, true);
+      }
       const error = new Error('Origin not allowed by CORS');
       error.statusCode = 403;
       return callback(error);
@@ -60,6 +63,22 @@ app.use(
 // Parsers
 app.use(express.json());
 app.use(cookieParser());
+
+app.use((req, res, next) => {
+  const origin = String(req.get('origin') || '');
+  if (!origin.startsWith('chrome-extension://')) return next();
+
+  const extensionId = String(req.get('x-legal-billables-extension') || '');
+  const extensionVersion = String(req.get('x-legal-billables-extension-version') || '');
+  if (!extensionId || !extensionVersion) {
+    return res.status(403).json({
+      ok: false,
+      message: 'Chrome extension requests must include extension identity headers',
+    });
+  }
+  req.extensionContext = { extensionId, extensionVersion };
+  next();
+});
 
 // Canonical API routes.
 app.use('/api', apiRoutes);

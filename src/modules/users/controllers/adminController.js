@@ -3,7 +3,9 @@
 import bcrypt from "bcryptjs";
 import User from "../models/User.js";
 import Admin from "../models/admin.js";
+import Firm from "../../firms/models/Firm.js";
 import { clearAuthCookie, setAuthCookie, signAuthToken } from "../../auth/services/authTokenService.js";
+import { toSafeUser } from "../utils/safeUser.js";
 
 function normName(s) { return (s || "").trim().replace(/\s+/g, " ").toLowerCase(); }
 
@@ -12,10 +14,9 @@ function roleMeta(name) {
   return { welcomeMessage: `Welcome Admin ${displayName}!`, dashboardPath: "/admin/dashboard" };
 }
 
-function toSafeUser(u) {
-  if (!u) return null;
-  const { _id, name, email, role, firmId, mobile, createdAt, updatedAt } = u;
-  return { id: _id, name, email, role, firmId, mobile, createdAt, updatedAt };
+async function firmExists(firmId) {
+  if (!firmId) return false;
+  return Boolean(await Firm.exists({ _id: firmId }));
 }
 
 function toSafeAdminProfile(a) {
@@ -31,10 +32,10 @@ function toSafeAdminProfile(a) {
  */
 export const adminLogin = async (req, res) => {
   try {
-    const { name, mobile, password } = req.body || {};
-    if (!name || !mobile || !password) return res.status(400).json({ message: "name, mobile and password are required" });
+    const { name, mobile, password, firmId } = req.body || {};
+    if (!name || !mobile || !password || !firmId) return res.status(400).json({ message: "name, mobile, password and firm are required" });
 
-    const user = await User.findOne({ mobile, role: "admin" });
+    const user = await User.findOne({ mobile, role: "admin", firmId });
     if (!user) return res.status(401).json({ message: "Invalid credentials" });
 
     if (normName(user.name) !== normName(name)) return res.status(401).json({ message: "Invalid credentials" });
@@ -65,7 +66,8 @@ export const adminLogin = async (req, res) => {
 export const adminRegister = async (req, res) => {
   try {
     const { name, mobile, password, email, firmId, address, qualifications } = req.body || {};
-    if (!name || !mobile || !password) return res.status(400).json({ message: "name, mobile and password are required" });
+    if (!name || !mobile || !password || !firmId) return res.status(400).json({ message: "name, mobile, password and firm are required" });
+    if (!(await firmExists(firmId))) return res.status(400).json({ message: "Firm not found. Please choose an existing firm." });
 
     const exists = await User.findOne({ mobile });
     if (exists) return res.status(409).json({ message: "Mobile already registered" });
@@ -162,7 +164,8 @@ export const adminDashboard = async (_req, res) => {
 export const createAdmin = async (req, res) => {
   try {
     const { name, mobile, password, email, firmId, address, qualifications } = req.body || {};
-    if (!name || !mobile || !password) return res.status(400).json({ message: "name, mobile and password are required" });
+    if (!name || !mobile || !password || !firmId) return res.status(400).json({ message: "name, mobile, password and firm are required" });
+    if (!(await firmExists(firmId))) return res.status(400).json({ message: "Firm not found. Please choose an existing firm." });
 
     const exists = await User.findOne({ mobile });
     if (exists) return res.status(409).json({ message: "Mobile already registered" });

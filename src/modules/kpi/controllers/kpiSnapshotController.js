@@ -53,7 +53,7 @@ async function computeAndUpsertCore(scope, scopeId, month) {
   const wipAgg = await TimeEntry.aggregate([
     {
       $match: {
-        status: { $in: ['submitted', 'approved'] },
+        status: 'approved',
         date: { $lt: end },
         ...(scopeId ? { [`${scope}Id`]: new mongoose.Types.ObjectId(scopeId) } : {}),
       },
