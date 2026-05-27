@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "test": "vitest run",
     "seed:dev": "node src/seeds/seedDevData.js",
-    "seed:firm": "node src/seeds/seedFirm.js"
+    "seed:firm": "node src/seeds/seedFirm.js",
+    "seed:veeresh-demo": "node src/seeds/seedVeereshDemoData.js"
   },
   "keywords": [],
   "author": "",

@@ -36,7 +36,6 @@ const configuredOrigins = [
   .filter(Boolean);
 
 const allowedOrigins = new Set(configuredOrigins);
-const allowChromeExtensionOrigins = process.env.ALLOW_CHROME_EXTENSION_ORIGINS !== 'false';
 
 app.use(
   cors({
@@ -44,7 +43,7 @@ app.use(
       if (!origin) return callback(null, true);
       const normalizedOrigin = origin.replace(/\/$/, '');
       if (allowedOrigins.has(normalizedOrigin)) return callback(null, true);
-      if (allowChromeExtensionOrigins && normalizedOrigin.startsWith('chrome-extension://')) {
+      if (normalizedOrigin.startsWith('chrome-extension://')) {
         return callback(null, true);
       }
       const error = new Error('Origin not allowed by CORS');
