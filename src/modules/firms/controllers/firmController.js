@@ -106,7 +106,11 @@ export const listFirms = async (req, res) => {
 export const listFirmOptions = async (_req, res) => {
   try {
     const items = await Firm.find({}, { name: 1 }).sort({ name: 1 });
+
     res.json({ ok: true, data: items.map(serializeFirm) });
+
+    res.json({ ok: true, data: items });
+
   } catch (err) {
     res.status(500).json({ ok: false, message: 'Failed to fetch firm options' });
   }

@@ -17,6 +17,11 @@ const app = express();
 // Trust proxy & health
 app.set('trust proxy', 1);
 app.get('/healthz', (req, res) => res.json({ ok: true }));
+app.get('/version', (req, res) => res.json({
+  ok: true,
+  commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || null,
+  branch: process.env.RENDER_GIT_BRANCH || null,
+}));
 
 const defaultLocalOrigins = [
   'http://localhost:5173',
