@@ -6,7 +6,7 @@ import { Client } from '../../clients/models/Client.js';
 import { TimeEntry } from '../../timeEntries/models/TimeEntry.js';
 import User from '../../users/models/User.js';
 
-const MAX_ACTIVITY_DURATION_MINUTES = 24 * 60;
+const MAX_ACTIVITY_DURATION_MINUTES = 180;
 const LOCKED_TIME_ENTRY_STATUSES = ['approved', 'billed', 'paid'];
 const EDIT_LOCKED_ACTIVITY_STATUSES = ['converted', 'locked', 'voided'];
 
@@ -186,6 +186,17 @@ const validateDurationPolicy = ({ durationMinutes, req, durationOverrideReason }
   };
 };
 
+const validateTimeRangePolicy = ({ startedAt, endedAt }) => {
+  if (!startedAt || !endedAt) return null;
+  const rangeMinutes = Math.round((endedAt.getTime() - startedAt.getTime()) / 60000);
+  if (rangeMinutes <= MAX_ACTIVITY_DURATION_MINUTES) return null;
+
+  return {
+    field: 'endedAt',
+    message: `Work time range cannot exceed ${MAX_ACTIVITY_DURATION_MINUTES} minutes`,
+  };
+};
+
 const assertNoOverlappingActivity = async ({ userId, startedAt, endedAt, excludeActivityId }, res) => {
   if (!startedAt || !endedAt) return true;
 
@@ -240,6 +251,7 @@ const pickUpdatePayload = (payload = {}) => {
     'billable',
     'durationOverrideReason',
     'source',
+    'workTool',
     'sourceRef',
     'narrative',
     'activityCode',
@@ -288,7 +300,7 @@ export const ActivityController = {
       const {
         caseId, clientId,
         activityType, startedAt, endedAt, durationMinutes,
-        source, sourceRef, narrative, activityCode, timezone,
+        source, workTool, sourceRef, narrative, activityCode, timezone,
         roundingPolicy, billable, durationOverrideReason,
       } = req.body;
 
@@ -311,6 +323,12 @@ export const ActivityController = {
 
       const timing = buildTiming({ startedAt, endedAt, durationMinutes, roundingPolicy });
       if (timing.errors) return validationFailed(res, timing.errors);
+
+      const rangeError = validateTimeRangePolicy({
+        startedAt: timing.startedAt,
+        endedAt: timing.endedAt,
+      });
+      if (rangeError) return validationFailed(res, [rangeError]);
 
       const durationError = validateDurationPolicy({
         durationMinutes: timing.durationMinutes,
@@ -340,6 +358,7 @@ export const ActivityController = {
         billable: billable !== undefined ? billable : true,
         durationOverrideReason,
         source: sourceValue,
+        workTool,
         sourceRef,
         narrative,
         activityCode,
@@ -441,6 +460,12 @@ export const ActivityController = {
       const payload = pickUpdatePayload(req.body);
       const timing = buildTiming(payload, activity);
       if (timing.errors) return validationFailed(res, timing.errors);
+
+      const rangeError = validateTimeRangePolicy({
+        startedAt: timing.startedAt,
+        endedAt: timing.endedAt,
+      });
+      if (rangeError) return validationFailed(res, [rangeError]);
 
       const durationError = validateDurationPolicy({
         durationMinutes: timing.durationMinutes,

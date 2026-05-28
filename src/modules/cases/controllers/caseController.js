@@ -234,11 +234,27 @@ export const getAllCases = async (req, res) => {
   try {
     const { page, limit, skip } = getPagination(req.query);
     const q = {};
+    const requesterId = req.user?.id;
+    const requesterRole = String(req.user?.role || '').toLowerCase();
+
     if (req.query.clientId) q.clientId = req.query.clientId;
     if (req.query.status) q.status = req.query.status;
     if (req.query.q) {
       const pattern = new RegExp(escapeRegex(req.query.q), 'i');
       q.$or = [{ title: pattern }, { description: pattern }, { case_type: pattern }];
+    }
+    if (requesterRole !== 'admin' && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
+      q.$and = [
+        ...(q.$and || []),
+        {
+          $or: [
+            { leadPartnerId: requesterId },
+            { managingLawyerId: requesterId },
+            { primaryLawyerId: requesterId },
+            { assignedUsers: requesterId },
+          ],
+        },
+      ];
     }
 
     const [items, total] = await Promise.all([

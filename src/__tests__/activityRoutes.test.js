@@ -342,7 +342,7 @@ test('POST /api/activities rejects non-admin duration above the policy limit', a
       caseId: CASE_ID,
       clientId: CLIENT_ID,
       activityType: 'research',
-      durationMinutes: 1441,
+      durationMinutes: 181,
     }),
   });
 
@@ -357,14 +357,14 @@ test('POST /api/activities lets admins override max duration with a reason', asy
       caseId: CASE_ID,
       clientId: CLIENT_ID,
       activityType: 'research',
-      durationMinutes: 1500,
+      durationMinutes: 240,
       durationOverrideReason: 'Historical import',
     }),
   }, 'admin');
 
   expect(response.status).toBe(201);
   expect(mocks.activityCreate).toHaveBeenCalledWith(expect.objectContaining({
-    durationMinutes: 1500,
+    durationMinutes: 240,
     durationOverrideReason: 'Historical import',
   }));
 });

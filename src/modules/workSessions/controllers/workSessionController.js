@@ -6,6 +6,8 @@ import { CaseAssignment } from '../../cases/models/CaseAssignment.js';
 import { TimeEntry } from '../../timeEntries/models/TimeEntry.js';
 import { computeRatedAmount, resolveBillingRate } from '../../rates/services/rateResolver.js';
 
+const MAX_WORK_SESSION_MINUTES = 180;
+
 const idString = (value) => {
   if (value === undefined || value === null) return '';
   return String(value._id || value);
@@ -128,6 +130,7 @@ export const WorkSessionController = {
         caseId: req.body.caseId,
         activityType: req.body.activityType,
         activityCode: req.body.activityCode,
+        workTool: req.body.workTool,
         narrative: req.body.narrative,
         billable: req.body.billable !== undefined ? req.body.billable : true,
         timezone: req.body.timezone,
@@ -252,6 +255,12 @@ export const WorkSessionController = {
       }
 
       const timing = calculateTiming(workSession, req.body?.endedAt ? new Date(req.body.endedAt) : new Date());
+      if (timing.durationMinutes > MAX_WORK_SESSION_MINUTES) {
+        return res.status(400).json({
+          ok: false,
+          message: `Work meter sessions cannot exceed ${MAX_WORK_SESSION_MINUTES} minutes. Stop and create a new entry for additional work.`,
+        });
+      }
       mongoSession = await mongoose.startSession();
       let activity;
       let timeEntry = null;
@@ -263,6 +272,7 @@ export const WorkSessionController = {
           caseId: workSession.caseId,
           activityType: workSession.activityType,
           activityCode: workSession.activityCode,
+          workTool: workSession.workTool,
           narrative: req.body?.finalNarrative || workSession.narrative || workSession.activityType,
           billable: workSession.billable,
           timezone: workSession.timezone,
@@ -272,7 +282,7 @@ export const WorkSessionController = {
           roundedDurationMinutes: timing.durationMinutes,
           workDate: workSession.startedAt,
           roundingPolicy: 'exact',
-          source: 'manual',
+          source: 'meter',
           sourceRef: `work-session:${workSession._id}`,
           status: 'captured',
           conversionStatus: 'unconverted',
