@@ -1,7 +1,8 @@
 import { boolean, date, number, objectId, oneOf, required, string, validateBody, validateParams, validateQuery } from '../../../middleware/validate.js';
 
 const activityTypes = ['email', 'drafting', 'review', 'meeting', 'hearing', 'research', 'call', 'other'];
-const activitySources = ['gmail', 'extension', 'research', 'manual', 'integration', 'system'];
+const activitySources = ['gmail', 'extension', 'research', 'manual', 'meter', 'integration', 'system'];
+const workTools = ['gmail', 'google_chrome', 'billbot_ai', 'microsoft_word', 'google_docs', 'pdf_reader', 'phone', 'video_meeting', 'court', 'manual', 'other'];
 const activityStatuses = ['captured', 'reviewed', 'converted', 'ignored', 'locked', 'voided'];
 const roundingPolicies = ['exact', 'six_minute', 'fifteen_minute'];
 const activitySortFields = [
@@ -35,6 +36,7 @@ const CREATE_FIELDS = new Set([
   'billable',
   'durationOverrideReason',
   'source',
+  'workTool',
   'sourceRef',
   'narrative',
   'activityCode',
@@ -50,6 +52,7 @@ const UPDATE_FIELDS = new Set([
   'billable',
   'durationOverrideReason',
   'source',
+  'workTool',
   'sourceRef',
   'narrative',
   'activityCode',
@@ -152,6 +155,7 @@ export const normalizeActivityPayload = (req, _res, next) => {
     'userId',
     'activityType',
     'source',
+    'workTool',
     'sourceRef',
     'narrative',
     'activityCode',
@@ -162,8 +166,9 @@ export const normalizeActivityPayload = (req, _res, next) => {
 
   if (body.activityType) body.activityType = body.activityType.toLowerCase();
   if (body.source) body.source = body.source.toLowerCase();
+  if (body.workTool) body.workTool = body.workTool.toLowerCase();
   if (body.roundingPolicy) body.roundingPolicy = body.roundingPolicy.toLowerCase();
-  dropEmptyOptional(body, ['userId', 'startedAt', 'endedAt', 'durationMinutes', 'source', 'sourceRef', 'narrative', 'activityCode', 'timezone', 'roundingPolicy', 'durationOverrideReason']);
+  dropEmptyOptional(body, ['userId', 'startedAt', 'endedAt', 'durationMinutes', 'source', 'workTool', 'sourceRef', 'narrative', 'activityCode', 'timezone', 'roundingPolicy', 'durationOverrideReason']);
 
   if (body.billable === 'true') body.billable = true;
   if (body.billable === 'false') body.billable = false;
@@ -214,6 +219,7 @@ export const validateCreateActivity = validateBody({
   billable: [boolean()],
   durationOverrideReason: [string({ max: 500 })],
   source: [oneOf(activitySources)],
+  workTool: [oneOf(workTools)],
   sourceRef: [string({ max: 255 })],
   narrative: [string({ max: 2000 })],
   activityCode: [string({ max: 80 })],
@@ -229,6 +235,7 @@ export const validateUpdateActivity = validateBody({
   billable: [boolean()],
   durationOverrideReason: [string({ max: 500 })],
   source: [oneOf(activitySources)],
+  workTool: [oneOf(workTools)],
   sourceRef: [string({ max: 255 })],
   narrative: [string({ max: 2000 })],
   activityCode: [string({ max: 80 })],

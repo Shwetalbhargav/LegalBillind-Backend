@@ -18,7 +18,11 @@ const ActivitySchema = new mongoose.Schema(
     billable: { type: Boolean, default: true, index: true },
     durationOverrideReason: { type: String },
 
-    source: { type: String, enum: ['gmail', 'extension', 'research', 'manual', 'integration', 'system'], default: 'extension' },
+    source: { type: String, enum: ['gmail', 'extension', 'research', 'manual', 'meter', 'integration', 'system'], default: 'extension' },
+    workTool: {
+      type: String,
+      enum: ['gmail', 'google_chrome', 'billbot_ai', 'microsoft_word', 'google_docs', 'pdf_reader', 'phone', 'video_meeting', 'court', 'manual', 'other'],
+    },
     sourceRef: { type: String },
 
     narrative: { type: String },

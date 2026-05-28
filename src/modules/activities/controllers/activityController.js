@@ -240,6 +240,7 @@ const pickUpdatePayload = (payload = {}) => {
     'billable',
     'durationOverrideReason',
     'source',
+    'workTool',
     'sourceRef',
     'narrative',
     'activityCode',
@@ -288,7 +289,7 @@ export const ActivityController = {
       const {
         caseId, clientId,
         activityType, startedAt, endedAt, durationMinutes,
-        source, sourceRef, narrative, activityCode, timezone,
+        source, workTool, sourceRef, narrative, activityCode, timezone,
         roundingPolicy, billable, durationOverrideReason,
       } = req.body;
 
@@ -340,6 +341,7 @@ export const ActivityController = {
         billable: billable !== undefined ? billable : true,
         durationOverrideReason,
         source: sourceValue,
+        workTool,
         sourceRef,
         narrative,
         activityCode,

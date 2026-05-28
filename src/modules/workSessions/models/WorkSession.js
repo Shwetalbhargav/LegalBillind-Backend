@@ -13,6 +13,10 @@ const WorkSessionSchema = new mongoose.Schema(
       required: true,
     },
     activityCode: { type: String, trim: true, maxlength: 80 },
+    workTool: {
+      type: String,
+      enum: ['gmail', 'google_chrome', 'billbot_ai', 'microsoft_word', 'google_docs', 'pdf_reader', 'phone', 'video_meeting', 'court', 'manual', 'other'],
+    },
     narrative: { type: String, trim: true, maxlength: 2000 },
     billable: { type: Boolean, default: true },
     timezone: { type: String, trim: true, maxlength: 80 },
