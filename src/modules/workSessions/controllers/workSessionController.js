@@ -6,6 +6,8 @@ import { CaseAssignment } from '../../cases/models/CaseAssignment.js';
 import { TimeEntry } from '../../timeEntries/models/TimeEntry.js';
 import { computeRatedAmount, resolveBillingRate } from '../../rates/services/rateResolver.js';
 
+const MAX_WORK_SESSION_MINUTES = 180;
+
 const idString = (value) => {
   if (value === undefined || value === null) return '';
   return String(value._id || value);
@@ -253,6 +255,12 @@ export const WorkSessionController = {
       }
 
       const timing = calculateTiming(workSession, req.body?.endedAt ? new Date(req.body.endedAt) : new Date());
+      if (timing.durationMinutes > MAX_WORK_SESSION_MINUTES) {
+        return res.status(400).json({
+          ok: false,
+          message: `Work meter sessions cannot exceed ${MAX_WORK_SESSION_MINUTES} minutes. Stop and create a new entry for additional work.`,
+        });
+      }
       mongoSession = await mongoose.startSession();
       let activity;
       let timeEntry = null;
