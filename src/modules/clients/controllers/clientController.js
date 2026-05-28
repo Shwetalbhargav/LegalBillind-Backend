@@ -87,6 +87,8 @@ export const getAllClients = async (req, res) => {
   try {
     const { page, limit, skip } = getPagination(req.query);
     const filter = {};
+    const requesterId = req.user?.id;
+    const requesterRole = String(req.user?.role || '').toLowerCase();
 
     if (req.query.status) filter.status = req.query.status;
     if (req.query.firmId) filter.firmId = req.query.firmId;
@@ -94,6 +96,25 @@ export const getAllClients = async (req, res) => {
     if (req.query.q) {
       const pattern = new RegExp(req.query.q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
       filter.$or = [{ displayName: pattern }, { email: pattern }, { phone: pattern }];
+    }
+    if (requesterRole !== 'admin' && requesterId && mongoose.Types.ObjectId.isValid(requesterId)) {
+      const assignedCaseClientIds = await Case.find({
+        $or: [
+          { leadPartnerId: requesterId },
+          { managingLawyerId: requesterId },
+          { primaryLawyerId: requesterId },
+          { assignedUsers: requesterId },
+        ],
+      }).distinct('clientId');
+      filter.$and = [
+        ...(filter.$and || []),
+        {
+          $or: [
+            { ownerUserId: requesterId },
+            { _id: { $in: assignedCaseClientIds } },
+          ],
+        },
+      ];
     }
 
     const [clients, total] = await Promise.all([
