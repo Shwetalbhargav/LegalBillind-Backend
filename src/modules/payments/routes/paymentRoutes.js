@@ -2,16 +2,26 @@ import { Router } from 'express';
 import { authenticate } from '../../../middleware/auth.js';
 import {
   validateCreatePayment,
+  validatePortalPayment,
   validateReconcilePayment,
+  validateWriteOff,
 } from '../validators/paymentValidators.js';
 import {
   listPayments,
   createPayment,
+  createPortalLink,
+  createWriteOff,
+  financeSummary,
+  getPortalInvoice,
   reconcilePayment,
+  submitPortalPayment,
   deletePayment,
 } from '../controllers/paymentController.js';
 
 const router = Router();
+
+router.get('/portal/:token', getPortalInvoice);
+router.post('/portal/:token/pay', validatePortalPayment, submitPortalPayment);
 
 router.use(authenticate);
 
@@ -23,7 +33,10 @@ router.use(authenticate);
  *  DELETE /api/payments/:id
  */
 router.get('/', listPayments);
+router.get('/finance-summary', financeSummary);
 router.post('/', validateCreatePayment, createPayment);
+router.post('/write-off', validateWriteOff, createWriteOff);
+router.post('/portal-link/:invoiceId', createPortalLink);
 router.post('/:id/reconcile', validateReconcilePayment, reconcilePayment);
 router.delete('/:id', deletePayment);
 

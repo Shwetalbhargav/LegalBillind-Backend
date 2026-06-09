@@ -38,6 +38,34 @@ const WorkSessionSchema = new mongoose.Schema(
     heartbeatCount: { type: Number, default: 0, min: 0 },
     lastUrl: { type: String, trim: true, maxlength: 2048 },
     lastTitle: { type: String, trim: true, maxlength: 300 },
+    webMeter: {
+      mode: { type: String, enum: ['manual_web_activity'], default: 'manual_web_activity' },
+      captureLevel: { type: String, enum: ['none', 'active_window'], default: 'active_window' },
+      idleAfterSeconds: { type: Number, default: 300, min: 60, max: 3600 },
+      maxSessionMinutes: { type: Number, default: 180, min: 1, max: 480 },
+      privacyNote: {
+        type: String,
+        trim: true,
+        maxlength: 500,
+        default: 'Tracks timer, pause/resume, heartbeat count, and optional active page title/URL only.',
+      },
+      lastActiveAt: { type: Date },
+      inactiveSeconds: { type: Number, default: 0, min: 0 },
+      activitySignals: [{ type: String, trim: true, maxlength: 80 }],
+    },
+    calendarEvent: {
+      title: { type: String, trim: true, maxlength: 240 },
+      scheduledStart: { type: Date },
+      scheduledEnd: { type: Date },
+      courtName: { type: String, trim: true, maxlength: 240 },
+      courtroom: { type: String, trim: true, maxlength: 120 },
+      judgeOrBench: { type: String, trim: true, maxlength: 240 },
+      location: { type: String, trim: true, maxlength: 500 },
+      videoLink: { type: String, trim: true, maxlength: 1000 },
+      externalCalendarId: { type: String, trim: true, maxlength: 240 },
+      notes: { type: String, trim: true, maxlength: 1000 },
+      attachedAt: { type: Date },
+    },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     stoppedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -54,6 +82,8 @@ WorkSessionSchema.index(
     partialFilterExpression: { status: { $in: ['running', 'paused'] } },
   }
 );
+WorkSessionSchema.index({ activityType: 1, 'calendarEvent.scheduledStart': 1 });
+WorkSessionSchema.index({ 'webMeter.lastActiveAt': -1 });
 
 export const WorkSession = mongoose.model('WorkSession', WorkSessionSchema);
 export default WorkSession;

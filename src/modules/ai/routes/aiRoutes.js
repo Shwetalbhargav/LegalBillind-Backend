@@ -1,15 +1,51 @@
 import express from 'express';
 import { authenticate } from '../../../middleware/auth.js';
+import { Case } from '../../cases/models/Case.js';
 import { generateBillableSummary } from '../services/gptService.js';
+import { MatterDocument } from '../models/MatterDocument.js';
+import {
+  buildGeneratedDocument,
+  buildMatterAnswer,
+  retrieveMatterDocuments,
+  summarizeText,
+} from '../services/matterDocumentService.js';
 import {
   validateAssist,
   validateEmailToBillable,
+  validateGenerateDocument,
   validateGenerateEmail,
+  validateMatterChat,
+  validateMatterDocument,
 } from '../validators/aiValidators.js';
 
 const router = express.Router();
 
 router.use(authenticate);
+
+async function assertMatterAccess({ caseId, clientId }, req, res) {
+  const matter = await Case.findById(caseId).select('clientId assignedUsers leadPartnerId managingLawyerId primaryLawyerId');
+  if (!matter) {
+    res.status(400).json({ success: false, message: 'caseId does not reference an existing matter' });
+    return null;
+  }
+  if (clientId && String(matter.clientId) !== String(clientId)) {
+    res.status(400).json({ success: false, message: 'clientId must match the selected matter client' });
+    return null;
+  }
+  if (req.user?.role === 'admin' || req.user?.role === 'partner') return matter;
+  const userId = String(req.user?.id || '');
+  const assigned = [
+    ...(matter.assignedUsers || []),
+    matter.leadPartnerId,
+    matter.managingLawyerId,
+    matter.primaryLawyerId,
+  ].some((value) => String(value || '') === userId);
+  if (!assigned) {
+    res.status(403).json({ success: false, message: 'You can only use AI on assigned matters' });
+    return null;
+  }
+  return matter;
+}
 
 function titleCase(value = '') {
   return String(value)
@@ -212,6 +248,91 @@ router.post('/assist', validateAssist, async (req, res) => {
   } catch (err) {
     console.error('[AI] assist failed:', err);
     return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.get('/matter-documents', async (req, res) => {
+  try {
+    const { caseId } = req.query;
+    if (!caseId) return res.status(400).json({ success: false, message: 'caseId is required' });
+    const matter = await assertMatterAccess({ caseId }, req, res);
+    if (!matter) return;
+    const rows = await MatterDocument.find({ caseId })
+      .select('caseId clientId title documentType summary tags createdBy createdAt updatedAt')
+      .populate('createdBy', 'name email role')
+      .sort({ createdAt: -1 });
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('[AI] list matter documents failed:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/matter-documents', validateMatterDocument, async (req, res) => {
+  try {
+    const matter = await assertMatterAccess(req.body, req, res);
+    if (!matter) return;
+    const doc = await MatterDocument.create({
+      caseId: req.body.caseId,
+      clientId: req.body.clientId || matter.clientId,
+      title: req.body.title,
+      documentType: req.body.documentType || 'other',
+      content: req.body.content,
+      summary: summarizeText(req.body.content),
+      tags: Array.isArray(req.body.tags) ? req.body.tags.slice(0, 12) : [],
+      createdBy: req.user.id,
+    });
+    res.status(201).json({ success: true, data: doc });
+  } catch (err) {
+    console.error('[AI] create matter document failed:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/matter-chat', validateMatterChat, async (req, res) => {
+  try {
+    const matter = await assertMatterAccess({ caseId: req.body.caseId }, req, res);
+    if (!matter) return;
+    const documents = await retrieveMatterDocuments({
+      caseId: req.body.caseId,
+      question: req.body.question,
+    });
+    const result = buildMatterAnswer({ question: req.body.question, documents });
+    res.json({ success: true, result });
+  } catch (err) {
+    console.error('[AI] matter-chat failed:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post('/generate-document', validateGenerateDocument, async (req, res) => {
+  try {
+    const matter = await assertMatterAccess(req.body, req, res);
+    if (!matter) return;
+    const documents = await retrieveMatterDocuments({
+      caseId: req.body.caseId,
+      question: req.body.instructions,
+      limit: 6,
+    });
+    const generated = buildGeneratedDocument({
+      documentType: req.body.documentType,
+      instructions: req.body.instructions,
+      sourceDocuments: documents,
+    });
+    res.json({
+      success: true,
+      result: {
+        ...generated,
+        citations: documents.map((doc) => ({
+          documentId: String(doc._id),
+          title: doc.title,
+          documentType: doc.documentType,
+        })),
+      },
+    });
+  } catch (err) {
+    console.error('[AI] generate-document failed:', err);
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 

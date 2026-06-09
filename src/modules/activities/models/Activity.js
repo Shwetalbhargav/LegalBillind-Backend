@@ -28,6 +28,28 @@ const ActivitySchema = new mongoose.Schema(
     narrative: { type: String },
     activityCode: { type: String },
     timezone: { type: String },
+    webMeter: {
+      mode: { type: String, enum: ['manual_web_activity'] },
+      captureLevel: { type: String, enum: ['none', 'active_window'] },
+      heartbeatCount: { type: Number, min: 0 },
+      inactiveSeconds: { type: Number, min: 0 },
+      lastUrl: { type: String, trim: true, maxlength: 2048 },
+      lastTitle: { type: String, trim: true, maxlength: 300 },
+      privacyNote: { type: String, trim: true, maxlength: 500 },
+    },
+    calendarEvent: {
+      title: { type: String, trim: true, maxlength: 240 },
+      scheduledStart: { type: Date },
+      scheduledEnd: { type: Date },
+      courtName: { type: String, trim: true, maxlength: 240 },
+      courtroom: { type: String, trim: true, maxlength: 120 },
+      judgeOrBench: { type: String, trim: true, maxlength: 240 },
+      location: { type: String, trim: true, maxlength: 500 },
+      videoLink: { type: String, trim: true, maxlength: 1000 },
+      externalCalendarId: { type: String, trim: true, maxlength: 240 },
+      notes: { type: String, trim: true, maxlength: 1000 },
+      attachedAt: { type: Date },
+    },
 
     status: { type: String, enum: ['captured', 'reviewed', 'converted', 'ignored', 'locked', 'voided'], default: 'captured', index: true },
     conversionStatus: { type: String, enum: ['unconverted', 'converted'], default: 'unconverted', index: true },
@@ -62,6 +84,7 @@ const ActivitySchema = new mongoose.Schema(
 ActivitySchema.index({ caseId: 1, userId: 1, createdAt: -1 });
 ActivitySchema.index({ userId: 1, workDate: -1, status: 1 });
 ActivitySchema.index({ caseId: 1, workDate: -1, status: 1 });
+ActivitySchema.index({ activityType: 1, 'calendarEvent.scheduledStart': 1 });
 ActivitySchema.index(
   { userId: 1, source: 1, sourceRef: 1 },
   {

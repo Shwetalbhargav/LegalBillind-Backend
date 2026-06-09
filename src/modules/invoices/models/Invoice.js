@@ -17,10 +17,31 @@ const InvoiceSchema = new mongoose.Schema(
 
     subtotal: { type: Number, default: 0 },
     tax: { type: Number, default: 0 },
+    taxName: { type: String, default: 'GST', trim: true },
+    taxRatePct: { type: Number, default: 0, min: 0, max: 100 },
+    taxInclusive: { type: Boolean, default: false },
+    taxDetails: {
+      taxName: { type: String, default: 'GST' },
+      taxRatePct: { type: Number, default: 0 },
+      inclusive: { type: Boolean, default: false },
+      taxableAmount: { type: Number, default: 0 },
+      taxAmount: { type: Number, default: 0 },
+      grossAmount: { type: Number, default: 0 },
+    },
     total: { type: Number, required: true },
 
     status: { type: String, enum: ['draft', 'sent', 'partial', 'paid', 'overdue', 'void'], default: 'draft', index: true },
     pdfUrl: { type: String },
+    sentAt: { type: Date },
+    sentTo: { type: String, trim: true, lowercase: true },
+    deliveryStatus: { type: String, enum: ['not_sent', 'sent', 'failed'], default: 'not_sent' },
+    deliveryError: { type: String },
+    paymentPortal: {
+      enabled: { type: Boolean, default: false },
+      tokenHash: { type: String, index: true },
+      expiresAt: { type: Date },
+      lastGeneratedAt: { type: Date },
+    },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     integrations: {
@@ -34,7 +55,13 @@ const InvoiceSchema = new mongoose.Schema(
     items: [
       { 
         billableId: { type: mongoose.Schema.Types.ObjectId, ref: 'Billable', index: true  },
-         description: String, durationMinutes: Number, rate: Number, amount: Number },
+        timeEntryId: { type: mongoose.Schema.Types.ObjectId, ref: 'TimeEntry', index: true },
+        description: String,
+        durationMinutes: Number,
+        qtyHours: Number,
+        rate: Number,
+        amount: Number,
+      },
     ],
   },
   { timestamps: true }
@@ -42,12 +69,14 @@ const InvoiceSchema = new mongoose.Schema(
 
 InvoiceSchema.pre('validate', function(next) {
   const items = this.items || [];
-  const subtotal = items.reduce((s, i) => s + (i.amount || 0), 0);
-  this.subtotal = Math.round(subtotal * 100) / 100;
+  if (items.length) {
+    const subtotal = items.reduce((s, i) => s + (i.amount || 0), 0);
+    this.subtotal = Math.round(subtotal * 100) / 100;
+  }
   const tax = this.tax || 0;
   this.total = Math.round((this.subtotal + tax) * 100) / 100;
   next();
-  });
+});
 
 InvoiceSchema.methods.computeStatus = function (paidAmount = 0) {
   if (this.status === 'void') return 'void';

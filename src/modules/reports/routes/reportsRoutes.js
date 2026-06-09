@@ -3,6 +3,8 @@ import { authenticate } from '../../../middleware/auth.js';
 import {
   exportTimeEntriesCsv,
   exportInvoicesCsv,
+  exportGstCsv,
+  getGstSummary,
   exportUtilizationCsv,
   exportPdf,
 } from '../controllers/reportsController.js';
@@ -20,6 +22,8 @@ router.use(authenticate);
  */
 router.get('/time-entries.csv', exportTimeEntriesCsv);
 router.get('/invoices.csv', exportInvoicesCsv);
+router.get('/gst-summary', getGstSummary);
+router.get('/gst.csv', exportGstCsv);
 router.get('/utilization.csv', exportUtilizationCsv);
 router.get('/pdf', exportPdf);
 

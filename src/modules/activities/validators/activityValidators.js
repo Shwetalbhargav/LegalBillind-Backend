@@ -41,6 +41,7 @@ const CREATE_FIELDS = new Set([
   'narrative',
   'activityCode',
   'timezone',
+  'calendarEvent',
 ]);
 
 const UPDATE_FIELDS = new Set([
@@ -57,6 +58,7 @@ const UPDATE_FIELDS = new Set([
   'narrative',
   'activityCode',
   'timezone',
+  'calendarEvent',
 ]);
 
 const REASON_FIELDS = new Set(['reason']);

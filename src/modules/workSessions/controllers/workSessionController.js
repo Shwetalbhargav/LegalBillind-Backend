@@ -6,7 +6,7 @@ import { CaseAssignment } from '../../cases/models/CaseAssignment.js';
 import { TimeEntry } from '../../timeEntries/models/TimeEntry.js';
 import { computeRatedAmount, resolveBillingRate } from '../../rates/services/rateResolver.js';
 
-const MAX_WORK_SESSION_MINUTES = 180;
+const DEFAULT_MAX_WORK_SESSION_MINUTES = 180;
 
 const idString = (value) => {
   if (value === undefined || value === null) return '';
@@ -45,6 +45,47 @@ const buildAuditEntry = ({ action, actorId, changes }) => ({
   actorId,
   at: new Date(),
   ...(changes ? { changes } : {}),
+});
+
+const normalizeCalendarEvent = (calendarEvent, activityType) => {
+  if (activityType !== 'hearing' || !calendarEvent || typeof calendarEvent !== 'object') return undefined;
+  const clean = {
+    title: calendarEvent.title,
+    scheduledStart: calendarEvent.scheduledStart ? new Date(calendarEvent.scheduledStart) : undefined,
+    scheduledEnd: calendarEvent.scheduledEnd ? new Date(calendarEvent.scheduledEnd) : undefined,
+    courtName: calendarEvent.courtName,
+    courtroom: calendarEvent.courtroom,
+    judgeOrBench: calendarEvent.judgeOrBench,
+    location: calendarEvent.location,
+    videoLink: calendarEvent.videoLink,
+    externalCalendarId: calendarEvent.externalCalendarId,
+    notes: calendarEvent.notes,
+  };
+  Object.keys(clean).forEach((key) => {
+    if (clean[key] === undefined || clean[key] === null || clean[key] === '') delete clean[key];
+  });
+  return Object.keys(clean).length ? { ...clean, attachedAt: new Date() } : undefined;
+};
+
+const normalizeWebMeter = (body = {}) => ({
+  mode: 'manual_web_activity',
+  captureLevel: body.meterCaptureLevel || 'active_window',
+  idleAfterSeconds: Number(body.idleAfterSeconds || 300),
+  maxSessionMinutes: Number(body.maxSessionMinutes || DEFAULT_MAX_WORK_SESSION_MINUTES),
+  privacyNote: 'Tracks timer, pause/resume, heartbeat count, and optional active page title/URL only.',
+  lastActiveAt: new Date(),
+  inactiveSeconds: 0,
+  activitySignals: ['started'],
+});
+
+const summarizeWebMeter = (workSession) => ({
+  mode: workSession.webMeter?.mode || 'manual_web_activity',
+  captureLevel: workSession.webMeter?.captureLevel || 'active_window',
+  heartbeatCount: Number(workSession.heartbeatCount || 0),
+  inactiveSeconds: Number(workSession.webMeter?.inactiveSeconds || 0),
+  lastUrl: workSession.lastUrl,
+  lastTitle: workSession.lastTitle,
+  privacyNote: workSession.webMeter?.privacyNote || 'Tracks timer, pause/resume, heartbeat count, and optional active page title/URL only.',
 });
 
 async function createTimeEntryForActivity(activity, req, session) {
@@ -134,6 +175,8 @@ export const WorkSessionController = {
         narrative: req.body.narrative,
         billable: req.body.billable !== undefined ? req.body.billable : true,
         timezone: req.body.timezone,
+        calendarEvent: normalizeCalendarEvent(req.body.calendarEvent, req.body.activityType),
+        webMeter: normalizeWebMeter(req.body),
         status: 'running',
         startedAt: new Date(),
         lastHeartbeatAt: new Date(),
@@ -198,6 +241,17 @@ export const WorkSessionController = {
       session.lastHeartbeatAt = req.body?.at ? new Date(req.body.at) : new Date();
       if (req.body?.url) session.lastUrl = req.body.url;
       if (req.body?.title) session.lastTitle = req.body.title;
+      session.webMeter = {
+        ...(session.webMeter?.toObject?.() || session.webMeter || {}),
+        lastActiveAt: req.body?.active === false ? session.webMeter?.lastActiveAt : new Date(),
+        inactiveSeconds: Number(req.body?.inactiveSeconds || 0),
+        activitySignals: [
+          ...new Set([
+            ...((session.webMeter?.activitySignals || []).map((item) => String(item))),
+            ...(req.body?.activitySignal ? [String(req.body.activitySignal)] : []),
+          ]),
+        ].slice(-20),
+      };
       session.heartbeatCount = Number(session.heartbeatCount || 0) + 1;
       await session.save();
 
@@ -255,10 +309,11 @@ export const WorkSessionController = {
       }
 
       const timing = calculateTiming(workSession, req.body?.endedAt ? new Date(req.body.endedAt) : new Date());
-      if (timing.durationMinutes > MAX_WORK_SESSION_MINUTES) {
+      const maxSessionMinutes = Number(workSession.webMeter?.maxSessionMinutes || DEFAULT_MAX_WORK_SESSION_MINUTES);
+      if (timing.durationMinutes > maxSessionMinutes) {
         return res.status(400).json({
           ok: false,
-          message: `Work meter sessions cannot exceed ${MAX_WORK_SESSION_MINUTES} minutes. Stop and create a new entry for additional work.`,
+          message: `Web activity meter sessions cannot exceed ${maxSessionMinutes} minutes. Stop and create a new entry for additional work.`,
         });
       }
       mongoSession = await mongoose.startSession();
@@ -276,6 +331,8 @@ export const WorkSessionController = {
           narrative: req.body?.finalNarrative || workSession.narrative || workSession.activityType,
           billable: workSession.billable,
           timezone: workSession.timezone,
+          webMeter: summarizeWebMeter(workSession),
+          calendarEvent: workSession.calendarEvent,
           startedAt: workSession.startedAt,
           endedAt: timing.end,
           durationMinutes: timing.durationMinutes,

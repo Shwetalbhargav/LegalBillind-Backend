@@ -11,6 +11,8 @@ import {
   generateFromApprovedTime,
   generateFromApprovedBillables,
   sendInvoice,
+  downloadInvoicePdf,
+  previewInvoiceHtml,
   voidInvoice,
   getPipeline,
   getPendingSummaryByClient
@@ -26,6 +28,8 @@ router.post('/from-billables', authorize('admin'), validateGenerateFromBillables
 router.get('/__analytics/pending-by-client', getPendingSummaryByClient);
 router.get('/__pipeline', getPipeline);
 router.get('/:id', getInvoiceById);
+router.get('/:id/pdf', downloadInvoicePdf);
+router.get('/:id/document', previewInvoiceHtml);
 router.post('/:id/send', validateSendInvoice, sendInvoice);
 router.post('/:id/void', voidInvoice);
 
