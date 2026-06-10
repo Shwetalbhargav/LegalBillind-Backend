@@ -13,6 +13,14 @@ export function zohoConnectHandler(req, res) {
   res.redirect(buildZohoAuthUrl(userId));
 }
 
+export function zohoConnectUrlHandler(req, res) {
+  const userId = req.user?.id || req.user?._id?.toString();
+  if (!userId) {
+    return res.status(401).json({ ok: false, message: 'User must be logged in to connect Zoho.' });
+  }
+  res.json({ ok: true, url: buildZohoAuthUrl(userId) });
+}
+
 export async function zohoCallbackHandler(req, res) {
   const { code, state, location, 'accounts-server': accountsServer } = req.query;
   if (!code || !state || !accountsServer) {
@@ -65,6 +73,7 @@ export async function zohoStatusHandler(req, res) {
 }
 
 router.get('/connect', authenticate, zohoConnectHandler);
+router.get('/connect-url', authenticate, zohoConnectUrlHandler);
 router.get('/callback', zohoCallbackHandler);
 router.get('/status', authenticate, zohoStatusHandler);
 

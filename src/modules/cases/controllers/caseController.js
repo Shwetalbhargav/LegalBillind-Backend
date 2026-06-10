@@ -239,6 +239,8 @@ export const getAllCases = async (req, res) => {
 
     if (req.query.clientId) q.clientId = req.query.clientId;
     if (req.query.status) q.status = req.query.status;
+    if (req.query.caseType) q.case_type = new RegExp(`^${escapeRegex(req.query.caseType)}$`, 'i');
+    if (req.query.caseTypeId) q.case_type_id = req.query.caseTypeId;
     if (req.query.q) {
       const pattern = new RegExp(escapeRegex(req.query.q), 'i');
       q.$or = [{ title: pattern }, { description: pattern }, { case_type: pattern }];
@@ -507,6 +509,8 @@ export const getCasesByClient = async (req, res) => {
     const { page, limit, skip } = getPagination(req.query);
     const q = { clientId };
     if (req.query.status) q.status = req.query.status;
+    if (req.query.caseType) q.case_type = new RegExp(`^${escapeRegex(req.query.caseType)}$`, 'i');
+    if (req.query.caseTypeId) q.case_type_id = req.query.caseTypeId;
     if (req.query.q) {
       const pattern = new RegExp(escapeRegex(req.query.q), 'i');
       q.$or = [{ title: pattern }, { description: pattern }, { case_type: pattern }];

@@ -730,8 +730,9 @@ export const syncEmailEntryToZoho = async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Email entry must be mapped to a client and matter before Zoho sync' });
     }
 
-    const zohoClient = await ensureClientInZoho(entry.userId, client);
-    const zohoMatter = await ensureCaseInZoho(entry.userId, matter, client, zohoClient.recordId);
+    const zohoUserId = req.user?.id || entry.userId;
+    const zohoClient = await ensureClientInZoho(zohoUserId, client);
+    const zohoMatter = await ensureCaseInZoho(zohoUserId, matter, client, zohoClient.recordId);
 
     entry.meta = {
       ...(entry.meta || {}),

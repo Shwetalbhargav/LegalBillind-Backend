@@ -46,6 +46,26 @@ const buildAuditEntry = ({ action, actorId, reason, changes }) => ({
   ...(changes ? { changes } : {}),
 });
 
+const normalizeCalendarEvent = (calendarEvent, activityType) => {
+  if (activityType !== 'hearing' || !calendarEvent || typeof calendarEvent !== 'object') return undefined;
+  const clean = {
+    title: calendarEvent.title,
+    scheduledStart: calendarEvent.scheduledStart ? new Date(calendarEvent.scheduledStart) : undefined,
+    scheduledEnd: calendarEvent.scheduledEnd ? new Date(calendarEvent.scheduledEnd) : undefined,
+    courtName: calendarEvent.courtName,
+    courtroom: calendarEvent.courtroom,
+    judgeOrBench: calendarEvent.judgeOrBench,
+    location: calendarEvent.location,
+    videoLink: calendarEvent.videoLink,
+    externalCalendarId: calendarEvent.externalCalendarId,
+    notes: calendarEvent.notes,
+  };
+  Object.keys(clean).forEach((key) => {
+    if (clean[key] === undefined || clean[key] === null || clean[key] === '') delete clean[key];
+  });
+  return Object.keys(clean).length ? { ...clean, attachedAt: new Date() } : undefined;
+};
+
 const populateActivity = (query) => {
   if (!query || typeof query.populate !== 'function') return query;
   return query
@@ -256,6 +276,7 @@ const pickUpdatePayload = (payload = {}) => {
     'narrative',
     'activityCode',
     'timezone',
+    'calendarEvent',
   ];
 
   return fields.reduce((acc, field) => {
@@ -300,7 +321,7 @@ export const ActivityController = {
       const {
         caseId, clientId,
         activityType, startedAt, endedAt, durationMinutes,
-        source, workTool, sourceRef, narrative, activityCode, timezone,
+        source, workTool, sourceRef, narrative, activityCode, timezone, calendarEvent,
         roundingPolicy, billable, durationOverrideReason,
       } = req.body;
 
@@ -363,6 +384,7 @@ export const ActivityController = {
         narrative,
         activityCode,
         timezone,
+        calendarEvent: normalizeCalendarEvent(calendarEvent, activityType),
         status: 'captured',
         conversionStatus: 'unconverted',
         createdBy: req.user.id,
@@ -490,8 +512,10 @@ export const ActivityController = {
         roundedDurationMinutes: timing.roundedDurationMinutes,
         workDate: timing.workDate,
         roundingPolicy: timing.roundingPolicy,
+        calendarEvent: normalizeCalendarEvent(payload.calendarEvent, payload.activityType || activity.activityType),
         updatedBy: req.user.id,
       };
+      if (payload.calendarEvent === undefined) delete update.calendarEvent;
 
       const updated = await Activity.findByIdAndUpdate(
         activity._id,

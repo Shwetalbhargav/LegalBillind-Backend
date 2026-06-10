@@ -25,6 +25,9 @@ export const validateGenerateFromBillables = validateBody({
 export const validateSendInvoice = validateBody({
   dueDate: [date()],
   pdfUrl: [string({ max: 2000 })],
+  to: [string({ max: 320 })],
+  subject: [string({ max: 300 })],
+  message: [string({ max: 2000 })],
 });
 
 export const validateInvoiceLine = validateBody({
@@ -32,5 +35,7 @@ export const validateInvoiceLine = validateBody({
   description: [required, string({ min: 1, max: 4000 })],
   qtyHours: [required, number({ min: 0 })],
   rate: [required, number({ min: 0 })],
-  amount: [required, number({ min: 0 })],
+  amount: [number({ min: 0 })],
+  billableId: [objectId()],
+  taxCategory: [string({ max: 80 })],
 });

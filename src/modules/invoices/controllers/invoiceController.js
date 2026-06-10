@@ -5,18 +5,8 @@ import { InvoiceLine } from '../models/InvoiceLine.js';
 import { TimeEntry } from '../../timeEntries/models/TimeEntry.js';
 import Billable from '../../billables/models/Billable.js';
 import { EmailEntry } from '../../emailEntries/models/EmailEntry.js';
-
-/**
- * Utility: recalc invoice totals from InvoiceLine rows
- */
-async function recalcTotals(invoiceId) {
-  const lines = await InvoiceLine.find({ invoiceId });
-  const subtotal = lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
-  const tax = 0; // extend later if you add tax rules
-  const total = Number((subtotal + tax).toFixed(2));
-  await Invoice.findByIdAndUpdate(invoiceId, { subtotal, tax, total });
-  return { subtotal, tax, total };
-}
+import { buildInvoiceHtml, buildInvoicePdfBuffer, emailInvoice } from '../services/invoiceDeliveryService.js';
+import { recalcInvoiceTotals } from '../services/invoiceTotalsService.js';
 
 /**
  * GET /api/invoices/:id
@@ -78,6 +68,8 @@ export const generateFromApprovedTime = async (req, res) => {
     const { clientId, caseId, timeEntryIds = [], currency = 'INR', dueDate, periodStart, periodEnd, createdBy } = req.body;
 
     if (!clientId || !Array.isArray(timeEntryIds) || timeEntryIds.length === 0) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ error: 'clientId and timeEntryIds[] are required' });
     }
 
@@ -136,7 +128,7 @@ export const generateFromApprovedTime = async (req, res) => {
     await InvoiceLine.insertMany(linesToInsert, { session });
 
     // Roll up totals
-    const totals = await recalcTotals(inv._id);
+    const totals = await recalcInvoiceTotals(inv._id, { session });
 
     // Mark time entries as billed
     await TimeEntry.updateMany(
@@ -232,6 +224,17 @@ export const generateFromApprovedBillables = async (req, res) => {
       items,
     }], { session });
 
+    await InvoiceLine.insertMany(items.map((item) => ({
+      invoiceId: invoice._id,
+      billableId: item.billableId,
+      description: item.description,
+      qtyHours: Number(((item.durationMinutes || 0) / 60).toFixed(4)),
+      rate: item.rate,
+      amount: item.amount,
+    })), { session });
+
+    const totals = await recalcInvoiceTotals(invoice._id, { session });
+
     await Billable.updateMany(
       { _id: { $in: billableIds } },
       {
@@ -250,7 +253,7 @@ export const generateFromApprovedBillables = async (req, res) => {
     );
 
     await session.commitTransaction();
-    res.status(201).json(invoice);
+    res.status(201).json({ ...invoice.toObject(), ...totals });
   } catch (error) {
     await session.abortTransaction();
     console.error(error);
@@ -262,28 +265,73 @@ export const generateFromApprovedBillables = async (req, res) => {
 
 /**
  * POST /api/invoices/:id/send
- * Body: { dueDate?, pdfUrl? }
- * Sets status -> 'sent'. Optionally updates dueDate/pdfUrl.
+ * Body: { dueDate?, pdfUrl?, to?, subject?, message? }
+ * Sends a PDF invoice by email when a recipient is present and sets status -> 'sent'.
  */
 export const sendInvoice = async (req, res) => {
   try {
     const { id } = req.params;
-    const { dueDate, pdfUrl } = req.body || {};
+    const { dueDate, pdfUrl, to, subject, message } = req.body || {};
 
-    const inv = await Invoice.findById(id);
+    const inv = await Invoice.findById(id).populate('clientId caseId createdBy');
     if (!inv) return res.status(404).json({ error: 'Invoice not found' });
     if (inv.status === 'void') return res.status(400).json({ error: 'Cannot send a void invoice' });
 
-    if (dueDate) inv.dueDate = new Date(dueDate);
-    if (pdfUrl) inv.pdfUrl = pdfUrl;
-    inv.issueDate = inv.issueDate || new Date();
-    inv.status = 'sent';
+    await recalcInvoiceTotals(inv._id);
+    const refreshed = await Invoice.findById(id).populate('clientId caseId createdBy');
+    if (dueDate) refreshed.dueDate = new Date(dueDate);
+    if (pdfUrl) refreshed.pdfUrl = pdfUrl;
+    refreshed.issueDate = refreshed.issueDate || new Date();
+    refreshed.status = 'sent';
+    refreshed.sentAt = new Date();
+    refreshed.deliveryStatus = 'sent';
 
-    await inv.save();
-    res.json(inv);
+    let delivery = null;
+    try {
+      delivery = await emailInvoice(refreshed, { to, subject, message });
+      refreshed.sentTo = delivery.to;
+      refreshed.deliveryError = undefined;
+    } catch (deliveryError) {
+      refreshed.deliveryStatus = 'failed';
+      refreshed.deliveryError = deliveryError.message;
+    }
+
+    await refreshed.save();
+    res.json({ ...refreshed.toObject(), delivery });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to send invoice' });
+  }
+};
+
+export const downloadInvoicePdf = async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id).populate('clientId caseId createdBy');
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+    await recalcInvoiceTotals(invoice._id);
+    const refreshed = await Invoice.findById(req.params.id).populate('clientId caseId createdBy');
+    const pdf = await buildInvoicePdfBuffer(refreshed);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="invoice-${refreshed.invoiceNumber || refreshed._id}.pdf"`);
+    return res.send(pdf);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to generate invoice PDF' });
+  }
+};
+
+export const previewInvoiceHtml = async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id).populate('clientId caseId createdBy');
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+    await recalcInvoiceTotals(invoice._id);
+    const refreshed = await Invoice.findById(req.params.id).populate('clientId caseId createdBy');
+    const html = await buildInvoiceHtml(refreshed);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(html);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to render invoice document' });
   }
 };
 

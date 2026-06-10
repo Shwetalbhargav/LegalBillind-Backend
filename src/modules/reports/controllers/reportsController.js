@@ -143,7 +143,7 @@ export const exportInvoicesCsv = async (req, res) => {
     }
 
     const rows = await Invoice.find(q)
-      .select('issueDate dueDate clientId caseId currency subtotal tax total status createdAt updatedAt')
+      .select('issueDate dueDate clientId caseId currency subtotal tax taxName taxRatePct taxInclusive total status sentAt deliveryStatus createdAt updatedAt')
       .populate('clientId', 'displayName name')
       .populate('caseId', 'title name')
       .sort({ issueDate: 1 })
@@ -159,9 +159,14 @@ export const exportInvoicesCsv = async (req, res) => {
       caseTitle: displayCase(r.caseId),
       currency: r.currency || 'INR',
       subtotal: r.subtotal ?? 0,
+      taxName: r.taxName || 'GST',
+      taxRatePct: r.taxRatePct ?? 0,
+      taxInclusive: Boolean(r.taxInclusive),
       tax: r.tax ?? 0,
       total: r.total ?? 0,
       status: r.status,
+      sentAt: r.sentAt?.toISOString() || '',
+      deliveryStatus: r.deliveryStatus || '',
       createdAt: r.createdAt?.toISOString(),
       updatedAt: r.updatedAt?.toISOString(),
     }));
@@ -176,15 +181,139 @@ export const exportInvoicesCsv = async (req, res) => {
       'caseTitle',
       'currency',
       'subtotal',
+      'taxName',
+      'taxRatePct',
+      'taxInclusive',
       'tax',
       'total',
       'status',
+      'sentAt',
+      'deliveryStatus',
       'createdAt',
       'updatedAt',
     ]);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to export invoices CSV' });
+  }
+};
+
+/**
+ * GET /api/reports/gst-summary
+ * Query: from?, to?, clientId?, caseId?, status?
+ */
+export const getGstSummary = async (req, res) => {
+  try {
+    const { clientId, caseId, status } = req.query;
+    const from = asDate(req.query.from);
+    const to = asDate(req.query.to);
+    const clientObjectId = asObjectId(clientId);
+    const caseObjectId = asObjectId(caseId);
+    if ((clientId && !clientObjectId) || (caseId && !caseObjectId)) {
+      return res.status(400).json({ error: 'Invalid clientId or caseId' });
+    }
+
+    const match = { status: { $ne: 'void' } };
+    if (clientObjectId) match.clientId = clientObjectId;
+    if (caseObjectId) match.caseId = caseObjectId;
+    if (status) match.status = status;
+    if (from || to) {
+      match.issueDate = {};
+      if (from) match.issueDate.$gte = from;
+      if (to) match.issueDate.$lte = to;
+    }
+
+    const [summary] = await Invoice.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          invoiceCount: { $sum: 1 },
+          taxableAmount: { $sum: { $ifNull: ['$subtotal', 0] } },
+          gstAmount: { $sum: { $ifNull: ['$tax', 0] } },
+          grossAmount: { $sum: { $ifNull: ['$total', 0] } },
+        },
+      },
+      { $project: { _id: 0, invoiceCount: 1, taxableAmount: 1, gstAmount: 1, grossAmount: 1 } },
+    ]);
+
+    res.json(summary || { invoiceCount: 0, taxableAmount: 0, gstAmount: 0, grossAmount: 0 });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to build GST summary' });
+  }
+};
+
+/**
+ * GET /api/reports/gst.csv
+ * Query: from?, to?, clientId?, caseId?, status?
+ */
+export const exportGstCsv = async (req, res) => {
+  try {
+    const { clientId, caseId, status } = req.query;
+    const from = asDate(req.query.from);
+    const to = asDate(req.query.to);
+    const clientObjectId = asObjectId(clientId);
+    const caseObjectId = asObjectId(caseId);
+    if ((clientId && !clientObjectId) || (caseId && !caseObjectId)) {
+      return res.status(400).json({ error: 'Invalid clientId or caseId' });
+    }
+
+    const q = { status: { $ne: 'void' } };
+    if (clientObjectId) q.clientId = clientObjectId;
+    if (caseObjectId) q.caseId = caseObjectId;
+    if (status) q.status = status;
+    if (from || to) {
+      q.issueDate = {};
+      if (from) q.issueDate.$gte = from;
+      if (to) q.issueDate.$lte = to;
+    }
+
+    const rows = await Invoice.find(q)
+      .select('issueDate dueDate clientId caseId currency subtotal tax taxName taxRatePct taxInclusive total status sentAt deliveryStatus createdAt')
+      .populate('clientId', 'displayName name')
+      .populate('caseId', 'title name')
+      .sort({ issueDate: 1 })
+      .lean();
+
+    const shaped = rows.map(r => ({
+      invoiceId: idString(r._id),
+      issueDate: r.issueDate?.toISOString()?.slice(0, 10),
+      clientName: displayClient(r.clientId),
+      caseTitle: displayCase(r.caseId),
+      currency: r.currency || 'INR',
+      taxableAmount: r.subtotal ?? 0,
+      gstName: r.taxName || 'GST',
+      gstRatePct: r.taxRatePct ?? 0,
+      gstInclusive: Boolean(r.taxInclusive),
+      gstAmount: r.tax ?? 0,
+      grossAmount: r.total ?? 0,
+      status: r.status,
+      deliveryStatus: r.deliveryStatus || '',
+      sentAt: r.sentAt?.toISOString() || '',
+      createdAt: r.createdAt?.toISOString() || '',
+    }));
+
+    return sendCsv(res, shaped, 'gst-report.csv', [
+      'invoiceId',
+      'issueDate',
+      'clientName',
+      'caseTitle',
+      'currency',
+      'taxableAmount',
+      'gstName',
+      'gstRatePct',
+      'gstInclusive',
+      'gstAmount',
+      'grossAmount',
+      'status',
+      'deliveryStatus',
+      'sentAt',
+      'createdAt',
+    ]);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to export GST CSV' });
   }
 };
 

@@ -193,6 +193,8 @@ export const validateAssignmentIdParam = validateParams({
 export const validateListCasesQuery = validateQuery({
   clientId: [objectId()],
   status: [oneOf(caseStatuses)],
+  caseType: [string({ max: 120 })],
+  caseTypeId: [objectId()],
   q: [string({ max: 160 })],
   page: [positiveIntQuery({ min: 1 })],
   limit: [positiveIntQuery({ min: 1, max: 100 })],
